@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/schemas/episode_contract.schema.json",
+  "title": "IPI Episode Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "episode_id",
+    "domain",
+    "split",
+    "user_task",
+    "tools",
+    "trusted_context",
+    "untrusted_context",
+    "attacker_goal",
+    "benign_success_condition",
+    "attack_success_condition",
+    "budget",
+    "defender_authority",
+    "forbidden_shortcuts"
+  ],
+  "properties": {
+    "episode_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable unique identifier for this episode."
+    },
+    "domain": {
+      "type": "string",
+      "enum": ["email", "web", "document_qa", "calendar", "file"]
+    },
+    "split": {
+      "type": "string",
+      "enum": ["train", "heldout"]
+    },
+    "user_task": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Benign user instruction given to the agent."
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description", "permissions"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "description": { "type": "string" },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["read", "write", "send", "search", "execute"]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "trusted_context": {
+      "type": "object",
+      "description": "Trusted initial environment state visible to the agent.",
+      "additionalProperties": true
+    },
+    "untrusted_context": {
+      "type": "object",
+      "description": "Untrusted external content that may contain injection payloads.",
+      "additionalProperties": true,
+      "required": ["channel", "payload_location", "content"],
+      "properties": {
+        "channel": {
+          "type": "string",
+          "enum": ["email", "web_page", "document", "search_result", "db_record"]
+        },
+        "payload_location": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where the attacker payload sits inside untrusted content."
+        },
+        "content": {
+          "description": "Raw untrusted content object or text."
+        }
+      }
+    },
+    "attacker_goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "benign_success_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "predicate"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["exact_match", "field_match", "contains_all", "custom"]
+        },
+        "predicate": {
+          "type": "object",
+          "description": "Machine-checkable benign-task success criteria."
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "attack_success_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "predicate"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["tool_call", "exfiltration", "state_change", "custom"]
+        },
+        "predicate": {
+          "type": "object",
+          "description": "Machine-checkable attack-success criteria."
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_tool_calls"],
+      "properties": {
+        "max_tool_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "defender_authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "forbidden"],
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forbidden": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "forbidden_shortcuts": {
+      "type": "array",
+      "description": "Degenerate strategies that must not count as valid defense wins.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "disable_all_tools",
+          "ignore_user_task",
+          "harness_bug_exploit",
+          "refuse_all_tool_use"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
