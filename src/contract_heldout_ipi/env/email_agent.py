@@ -1,12 +1,11 @@
-"""Minimal email-agent sandbox placeholder for MVP episodes.
-
-Execution against an LLM will be added in a later phase.
-This module only defines the tool surface assumed by seed contracts.
-"""
+"""In-memory email environment used by email-domain evaluation episodes."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    from contract_heldout_ipi.contract.models import EpisodeContract
 
 
 EMAIL_TOOLS = [
@@ -33,10 +32,33 @@ EMAIL_TOOLS = [
 ]
 
 
-class EmailSandbox:
-    """In-memory mailbox used by email-domain episodes."""
+class EmailSandboxError(RuntimeError):
+    """Base class for sandbox tool execution errors."""
 
-    def __init__(self, trusted_context: dict[str, Any], untrusted_content: Any):
+
+class UnknownTool(EmailSandboxError):
+    """Raised when an agent requests a tool not exposed by the episode."""
+
+
+class ToolBudgetExceeded(EmailSandboxError):
+    """Raised when an agent attempts to exceed the episode tool budget."""
+
+
+class EmailSandbox:
+    """In-memory mailbox with contract-scoped tools and call budgeting."""
+
+    def __init__(
+        self,
+        trusted_context: dict[str, Any],
+        untrusted_content: Any,
+        *,
+        allowed_tools: Iterable[str] | None = None,
+        max_tool_calls: int | None = None,
+    ):
+        if max_tool_calls is not None and max_tool_calls < 1:
+            raise ValueError("max_tool_calls must be at least 1")
+
+        self.trusted_context = dict(trusted_context)
         self.inbox = list(trusted_context.get("inbox", []))
         # Ensure untrusted payload content is present as an inbox message when provided.
         if isinstance(untrusted_content, dict) and "id" in untrusted_content:
@@ -44,6 +66,48 @@ class EmailSandbox:
                 self.inbox.append(untrusted_content)
         self.sent: list[dict[str, Any]] = []
         self.contacts = list(trusted_context.get("contacts", []))
+        self.calendar = list(trusted_context.get("calendar", []))
+        self.allowed_tools = (
+            {tool["name"] for tool in EMAIL_TOOLS}
+            if allowed_tools is None
+            else set(allowed_tools)
+        )
+        self.max_tool_calls = max_tool_calls
+        self.tool_call_count = 0
+
+    @classmethod
+    def from_episode(cls, episode: EpisodeContract) -> EmailSandbox:
+        """Create a sandbox whose tools and budget come from an episode contract."""
+        if episode.domain != "email":
+            raise ValueError(f"EmailSandbox cannot run domain '{episode.domain}'")
+        return cls(
+            trusted_context=episode.trusted_context,
+            untrusted_content=episode.untrusted_context.content,
+            allowed_tools={tool.name for tool in episode.tools},
+            max_tool_calls=episode.budget.max_tool_calls,
+        )
+
+    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+        """Dispatch one declared tool call and charge it against the budget.
+
+        A dispatched call consumes budget even when the underlying handler raises.
+        Calls to unknown or undeclared tools are rejected before consuming budget.
+        """
+        handlers = {
+            "list_emails": self.list_emails,
+            "read_email": self.read_email,
+            "send_email": self.send_email,
+            "calendar_lookup": self.calendar_lookup,
+        }
+        if name not in self.allowed_tools or name not in handlers:
+            raise UnknownTool(f"tool is not available in this episode: {name}")
+        if self.max_tool_calls is not None and self.tool_call_count >= self.max_tool_calls:
+            raise ToolBudgetExceeded(
+                f"tool-call budget exhausted ({self.max_tool_calls} calls)"
+            )
+
+        self.tool_call_count += 1
+        return handlers[name](**(arguments or {}))
 
     def list_emails(self) -> list[dict[str, Any]]:
         return [
@@ -61,3 +125,12 @@ class EmailSandbox:
         message = {"to": to, "subject": subject, "body": body}
         self.sent.append(message)
         return {"status": "sent", "message": message}
+
+    def calendar_lookup(self, query: str) -> list[dict[str, Any]]:
+        """Return trusted calendar events containing the case-insensitive query."""
+        normalized_query = query.casefold()
+        return [
+            event
+            for event in self.calendar
+            if normalized_query in str(event).casefold()
+        ]
