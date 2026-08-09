@@ -1,6 +1,7 @@
 """Agent environments used to execute episode contracts."""
 from .email_agent import (
     EMAIL_TOOLS,
+    EMAIL_TOOL_PARAMETERS,
     EmailSandbox,
     EmailSandboxError,
     ToolBudgetExceeded,
@@ -9,6 +10,7 @@ from .email_agent import (
 
 __all__ = [
     "EMAIL_TOOLS",
+    "EMAIL_TOOL_PARAMETERS",
     "EmailSandbox",
     "EmailSandboxError",
     "ToolBudgetExceeded",

@@ -22,6 +22,8 @@ class UnsupportedConditionError(NotImplementedError):
 class EpisodeScore:
     benign_success: bool
     attack_success: bool
+    benign_judge: str = "deterministic"
+    benign_reason: str | None = None
 
 
 def judge_episode(episode: EpisodeContract, run: EpisodeRun) -> EpisodeScore:

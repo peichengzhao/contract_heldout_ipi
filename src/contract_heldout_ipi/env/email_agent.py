@@ -31,6 +31,36 @@ EMAIL_TOOLS = [
     },
 ]
 
+EMAIL_TOOL_PARAMETERS: dict[str, dict[str, Any]] = {
+    "list_emails": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+    "read_email": {
+        "type": "object",
+        "properties": {"email_id": {"type": "string"}},
+        "required": ["email_id"],
+        "additionalProperties": False,
+    },
+    "send_email": {
+        "type": "object",
+        "properties": {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+        },
+        "required": ["to", "subject", "body"],
+        "additionalProperties": False,
+    },
+    "calendar_lookup": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
 
 class EmailSandboxError(RuntimeError):
     """Base class for sandbox tool execution errors."""

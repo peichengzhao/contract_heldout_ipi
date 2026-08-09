@@ -37,6 +37,7 @@ class EpisodeRun:
     final_answer: str
     steps: list[AgentStep] = field(default_factory=list)
     terminated_reason: str = "completed"
+    agent_error: str | None = None
 
     @property
     def tool_calls(self) -> list[ToolCallRecord]:
