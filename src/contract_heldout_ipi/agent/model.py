@@ -96,11 +96,14 @@ class ExperimentModelConfig:
     judge_model: str
     base_url: str
     api_key: str
+    agent_model: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("attack_model", "defense_model", "judge_model"):
             if not getattr(self, field_name).strip():
                 raise ModelConfigurationError(f"{field_name} must not be empty")
+        if self.agent_model is not None and not self.agent_model.strip():
+            raise ModelConfigurationError("agent_model must not be empty when set")
         # Reuse URL and credential validation from the single-client config.
         ModelConfig(self.defense_model, self.base_url, self.api_key)
 
@@ -111,47 +114,63 @@ class ExperimentModelConfig:
             {
                 "attack_model",
                 "defense_model",
+                "agent_model",
                 "judge_model",
                 "base_url",
                 "api_key",
             },
         )
-        missing = {
-            "attack_model",
-            "defense_model",
-            "judge_model",
-            "base_url",
-            "api_key",
-        } - values.keys()
-        if missing:
-            names = ", ".join(sorted(missing))
-            raise ModelConfigurationError(f"experiment config is missing: {names}")
-        return cls(**values)
+        return cls._from_values(values, source="experiment config")
 
     @classmethod
     def from_env(cls) -> ExperimentModelConfig:
         values = {
             "attack_model": os.getenv("ATTACK_MODEL", ""),
             "defense_model": os.getenv("DEFENSE_MODEL", ""),
+            "agent_model": os.getenv("AGENT_MODEL", ""),
             "judge_model": os.getenv("JUDGE_MODEL", ""),
             "base_url": os.getenv("OPENAI_BASE_URL", ""),
             "api_key": os.getenv("OPENAI_API_KEY", ""),
         }
-        missing = [key for key, value in values.items() if not value]
+        # Empty optional fields should fall back inside `_from_values`.
+        if not values.get("defense_model"):
+            values.pop("defense_model", None)
+        if not values.get("agent_model"):
+            values.pop("agent_model", None)
+        return cls._from_values(values, source="environment experiment configuration")
+
+    @classmethod
+    def _from_values(
+        cls, values: dict[str, str], *, source: str
+    ) -> ExperimentModelConfig:
+        required = {"attack_model", "judge_model", "base_url", "api_key"}
+        missing = required - {
+            key for key, value in values.items() if value and value.strip()
+        }
         if missing:
             names = ", ".join(sorted(missing))
-            raise ModelConfigurationError(
-                f"missing environment experiment configuration: {names}"
-            )
-        return cls(**values)
+            raise ModelConfigurationError(f"{source} is missing: {names}")
+        attack_model = values["attack_model"].strip()
+        defense_model = values.get("defense_model", "").strip() or attack_model
+        agent_raw = values.get("agent_model", "").strip()
+        return cls(
+            attack_model=attack_model,
+            defense_model=defense_model,
+            judge_model=values["judge_model"].strip(),
+            base_url=values["base_url"].strip(),
+            api_key=values["api_key"].strip(),
+            agent_model=agent_raw or None,
+        )
 
     def for_role(
-        self, role: Literal["attack", "defense", "judge"]
+        self, role: Literal["attack", "defense", "judge", "agent"]
     ) -> ModelConfig:
         model = {
             "attack": self.attack_model,
             "defense": self.defense_model,
             "judge": self.judge_model,
+            # Task agent may be configured separately when defenses are skipped.
+            "agent": self.agent_model or self.defense_model,
         }[role]
         return ModelConfig(model=model, base_url=self.base_url, api_key=self.api_key)
 
@@ -391,9 +410,12 @@ def _read_named_config_fields(
 ) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if ":" not in line:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!--") or stripped.startswith("#"):
             continue
-        key, value = line.split(":", 1)
+        if ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
         normalized_key = key.strip().lower()
         if normalized_key in field_names:
             values[normalized_key] = value.strip()

@@ -24,6 +24,8 @@ class EpisodeScore:
     attack_success: bool
     benign_judge: str = "deterministic"
     benign_reason: str | None = None
+    attack_judge: str = "deterministic"
+    attack_reason: str | None = None
 
 
 def judge_episode(episode: EpisodeContract, run: EpisodeRun) -> EpisodeScore:

@@ -12,3 +12,6 @@ src/*.egg-info/
 .env
 outputs/
 results/
+api_information.md
+*_model_config.md
+private_model_config.md

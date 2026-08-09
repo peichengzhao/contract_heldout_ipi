@@ -42,17 +42,29 @@ class Referee:
 
     def validate(self, episode: EpisodeContract, *, raw: dict | None = None) -> RefereeReport:
         schema_ok = True
+        schema_error: str | None = None
         if raw is not None:
             try:
                 validate_against_schema(raw)
-            except Exception:
+            except Exception as exc:
                 schema_ok = False
+                schema_error = f"{type(exc).__name__}: {exc}"
 
         results = [check(episode) for check in self.checks]
         accepted = schema_ok and all(r.ok for r in results)
-        return RefereeReport(
+        report = RefereeReport(
             episode_id=episode.episode_id,
             verdict=RefereeVerdict.ACCEPT if accepted else RefereeVerdict.REJECT,
             schema_ok=schema_ok,
             checks=results,
         )
+        if schema_error is not None:
+            report.checks.insert(
+                0,
+                CheckResult(
+                    name="schema",
+                    ok=False,
+                    message=schema_error,
+                ),
+            )
+        return report

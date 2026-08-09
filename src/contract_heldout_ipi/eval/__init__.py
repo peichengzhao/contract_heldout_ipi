@@ -14,6 +14,7 @@ from .judge import (
     judge_benign,
     judge_episode,
 )
+from .intent_judge import LLMIntentEpisodeJudge
 from .llm_judge import LLMEpisodeJudge
 from .metrics import SplitMetrics, TransferGap
 from .trace import AgentStep, EpisodeRun, ToolCallRecord
@@ -28,6 +29,7 @@ __all__ = [
     "EvaluationReport",
     "InvalidPredicateError",
     "LLMEpisodeJudge",
+    "LLMIntentEpisodeJudge",
     "SplitMetrics",
     "ToolCallRecord",
     "TransferGap",

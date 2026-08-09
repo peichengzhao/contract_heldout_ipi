@@ -101,6 +101,43 @@ def test_experiment_model_config_resolves_three_roles(tmp_path):
     assert config.for_role("judge").api_key == "test-secret"
 
 
+def test_experiment_model_config_allows_missing_defense_model(tmp_path):
+    path = tmp_path / "models.md"
+    path.write_text(
+        "<!-- defense_model: ignored -->\n"
+        "attack_model: attacker\n"
+        "judge_model: judge\n"
+        "base_url: https://gateway.example/v1\n"
+        "api_key: test-secret\n",
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.attack_model == "attacker"
+    assert config.defense_model == "attacker"
+    assert config.judge_model == "judge"
+    assert config.for_role("agent").model == "attacker"
+
+
+def test_experiment_model_config_uses_optional_agent_model(tmp_path):
+    path = tmp_path / "models.md"
+    path.write_text(
+        "attack_model: attacker\n"
+        "agent_model: task-agent\n"
+        "judge_model: judge\n"
+        "base_url: https://gateway.example/v1\n"
+        "api_key: test-secret\n",
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.for_role("attack").model == "attacker"
+    assert config.for_role("agent").model == "task-agent"
+    assert config.for_role("defense").model == "attacker"
+
+
 def test_openai_compatible_client_parses_one_tool_call():
     transport = StubTransport(
         {
