@@ -8,7 +8,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -16,11 +16,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from contract_heldout_ipi.agent import (  # noqa: E402
+    ChatModelClient,
     ExperimentModelConfig,
     LLMAgent,
     ModelClientError,
     ModelConfigurationError,
-    OpenAICompatibleChatClient,
+    ModelRole,
+    build_role_client,
 )
 from contract_heldout_ipi.attack import HarnessAwareAttackGenerator  # noqa: E402
 from contract_heldout_ipi.contract.loader import load_episodes_dir  # noqa: E402
@@ -51,8 +53,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--attack-temperature", type=float, default=0.7)
-    parser.add_argument("--defense-temperature", type=float, default=0.0)
+    parser.add_argument(
+        "--task-agent-temperature",
+        "--defense-temperature",
+        dest="task_agent_temperature",
+        type=float,
+        default=0.0,
+    )
     parser.add_argument("--judge-temperature", type=float, default=0.0)
+    parser.add_argument("--optimizer-temperature", type=float, default=0.0)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -71,13 +80,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         prompt=initial_defense.system_prompt(),
     )
     attack_client = _client(config, "attack", args.attack_temperature, args)
-    defense_client = _client(config, "defense", args.defense_temperature, args)
+    task_agent_client = _client(
+        config, "task_agent", args.task_agent_temperature, args
+    )
     judge_client = _client(config, "judge", args.judge_temperature, args)
+    optimizer_client = _client(
+        config, "optimizer", args.optimizer_temperature, args
+    )
     adaptive_runner = AdaptiveEvaluationRunner(
         attack_generator=HarnessAwareAttackGenerator(attack_client),
-        defense_agent_factory=lambda harness: LLMAgent(defense_client, harness),
+        defense_agent_factory=lambda harness: LLMAgent(task_agent_client, harness),
         score_episode=LLMEpisodeJudge(judge_client).score,
-        optimizer=HarnessOptimizer(judge_client),
+        optimizer=HarnessOptimizer(optimizer_client),
     )
     episodes = [
         *load_episodes_dir(ROOT / "episodes" / "train"),
@@ -100,18 +114,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Train Utility: {report.train.benign_utility:.3f}")
     print(f"Held-out ASR: {report.heldout.attack_success_rate:.3f}")
     print(f"Held-out Utility: {report.heldout.benign_utility:.3f}")
-    print(f"Security Gap: {report.gap.security_gap:.3f}")
+    print(
+        "Security Gap: "
+        + (
+            "N/A"
+            if report.gap.security_gap is None
+            else f"{report.gap.security_gap:.3f}"
+        )
+    )
     return 0
 
 
 def _client(
     config: ExperimentModelConfig,
-    role: Literal["attack", "defense", "judge"],
+    role: ModelRole,
     temperature: float,
     args: argparse.Namespace,
-) -> OpenAICompatibleChatClient:
-    return OpenAICompatibleChatClient(
-        config.for_role(role),
+) -> ChatModelClient:
+    return build_role_client(
+        config,
+        role,
         timeout=args.timeout,
         temperature=temperature,
         max_tokens=args.max_tokens,
@@ -124,8 +146,11 @@ def _write_output(path: Path, config: ExperimentModelConfig, report: object) -> 
     payload = {
         "models": {
             "attack_model": config.attack_model,
+            "attack_provider": config.attack_provider,
             "defense_model": config.defense_model,
             "judge_model": config.judge_model,
+            "optimizer_model": config.for_role("optimizer").model,
+            "task_agent_model": config.for_role("task_agent").model,
         },
         "report": asdict(report),
     }

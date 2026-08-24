@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v1.2.2",
+  "suite": "workspace",
+  "train": {
+    "user_task_ids": ["user_task_0", "user_task_1", "user_task_3"],
+    "injection_task_ids": ["injection_task_0", "injection_task_1", "injection_task_2"]
+  },
+  "heldout": {
+    "user_task_ids": ["user_task_2", "user_task_5"],
+    "injection_task_ids": ["injection_task_3", "injection_task_4"]
+  }
+}

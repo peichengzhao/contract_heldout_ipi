@@ -1,13 +1,36 @@
+import http.client
+
 import pytest
 
 from contract_heldout_ipi.agent import (
+    CursorChatClient,
     ExperimentModelConfig,
     ModelAPIError,
     ModelConfig,
     ModelConfigurationError,
     ModelResponseError,
     OpenAICompatibleChatClient,
+    build_role_client,
 )
+from contract_heldout_ipi.agent.model import UrllibJsonTransport
+
+
+def test_urllib_transport_normalizes_incomplete_http_response(monkeypatch):
+    def broken_urlopen(request, timeout):
+        raise http.client.IncompleteRead(b"", 100)
+
+    monkeypatch.setattr("urllib.request.urlopen", broken_urlopen)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        UrllibJsonTransport().post(
+            "https://gateway.example/v1/chat/completions",
+            headers={"Authorization": "Bearer test"},
+            payload={"model": "test"},
+            timeout=30.0,
+        )
+
+    assert exc_info.value.retryable is True
+    assert "IncompleteRead" in str(exc_info.value)
 
 
 class StubTransport:
@@ -31,9 +54,11 @@ class SequenceTransport:
     def __init__(self, outcomes):
         self.outcomes = list(outcomes)
         self.call_count = 0
+        self.max_tokens_seen = []
 
     def post(self, url, *, headers, payload, timeout):
         self.call_count += 1
+        self.max_tokens_seen.append(payload.get("max_tokens"))
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -99,6 +124,91 @@ def test_experiment_model_config_resolves_three_roles(tmp_path):
     assert config.for_role("defense").model == "defender"
     assert config.for_role("judge").model == "judge"
     assert config.for_role("judge").api_key == "test-secret"
+    assert config.for_role("rule_judge").model == "judge"
+    assert config.for_role("optimizer").model == "judge"
+    assert config.for_role("task_agent").model == "defender"
+
+
+def test_experiment_model_config_resolves_independent_game_roles(tmp_path):
+    path = tmp_path / "models.md"
+    path.write_text(
+        "attack_model: attacker\n"
+        "defense_model: defender-negotiator\n"
+        "judge_model: utility-judge\n"
+        "rule_judge_model: rule-judge\n"
+        "optimizer_model: harness-optimizer\n"
+        "task_agent_model: task-agent\n"
+        "base_url: https://gateway.example/v1\n"
+        "api_key: test-secret\n",
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.for_role("defense").model == "defender-negotiator"
+    assert config.for_role("judge").model == "utility-judge"
+    assert config.for_role("rule_judge").model == "rule-judge"
+    assert config.for_role("optimizer").model == "harness-optimizer"
+    assert config.for_role("task_agent").model == "task-agent"
+    assert config.for_role("agent").model == "task-agent"
+    assert build_role_client(config, "rule_judge").config.model == "rule-judge"
+    assert build_role_client(config, "optimizer").config.model == "harness-optimizer"
+    assert build_role_client(config, "task_agent").config.model == "task-agent"
+
+
+def test_experiment_model_config_reads_legacy_python_constants(tmp_path):
+    path = tmp_path / "model_api.py"
+    path.write_text(
+        'ATTACK_MODEL = "attacker"\n'
+        'OPENAI_BASE_URL = "https://gateway.example/v1"\n'
+        'OPENAI_API_KEY = "test-secret"\n'
+        'OPTIMIZER_MODEL = "optimizer"\n'
+        'PROTECT_MODEL = "protector"\n'
+        'llm = make_client(model="ignored")\n',
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.for_role("attack").model == "attacker"
+    assert config.for_role("defense").model == "protector"
+    assert config.for_role("judge").model == "protector"
+    assert config.for_role("rule_judge").model == "protector"
+    assert config.for_role("task_agent").model == "protector"
+    assert config.for_role("optimizer").model == "optimizer"
+
+
+def test_experiment_model_config_routes_deepseek_separately(tmp_path):
+    path = tmp_path / "model_api.py"
+    path.write_text(
+        'OPENAI_BASE_URL = "https://openai-gateway.example/v1"\n'
+        'OPENAI_API_KEY = "openai-secret"\n'
+        'DEEPSEEK_BASE_URL = "https://deepseek-gateway.example/v1"\n'
+        'DEEPSEEK_API_KEY = "deepseek-secret"\n'
+        'ATTACK_MODEL = "deepseek-v4-flash"\n'
+        'DEFENSE_MODEL = "deepseek-v4-flash"\n'
+        'TASK_AGENT_MODEL = "deepseek-v4-flash"\n'
+        'JUDGE_MODEL = "gpt-5.6-sol"\n'
+        'RULE_JUDGE_MODEL = "gpt-5.6-sol"\n'
+        'OPTIMIZER_MODEL = "deepseek-v4-flash"\n',
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.for_role("attack").base_url == "https://deepseek-gateway.example/v1"
+    assert config.for_role("attack").api_key == "deepseek-secret"
+    assert config.for_role("task_agent").base_url == (
+        "https://deepseek-gateway.example/v1"
+    )
+    assert config.for_role("optimizer").base_url == (
+        "https://deepseek-gateway.example/v1"
+    )
+    assert config.for_role("judge").base_url == "https://openai-gateway.example/v1"
+    assert config.for_role("judge").api_key == "openai-secret"
+    assert config.for_role("rule_judge").base_url == (
+        "https://openai-gateway.example/v1"
+    )
 
 
 def test_experiment_model_config_allows_missing_defense_model(tmp_path):
@@ -136,6 +246,114 @@ def test_experiment_model_config_uses_optional_agent_model(tmp_path):
     assert config.for_role("attack").model == "attacker"
     assert config.for_role("agent").model == "task-agent"
     assert config.for_role("defense").model == "attacker"
+
+
+def test_experiment_model_config_supports_cursor_attack_provider(tmp_path):
+    path = tmp_path / "models.md"
+    path.write_text(
+        "attack_provider: cursor\n"
+        "attack_model: grok-4.5\n"
+        "cursor_api_key: crsr_test\n"
+        "defense_model: defender\n"
+        "judge_model: judge\n"
+        "base_url: https://gateway.example/v1\n"
+        "api_key: test-secret\n",
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.attack_provider == "cursor"
+    assert config.attack_model == "grok-4.5"
+    assert config.cursor_api_key == "crsr_test"
+    assert config.provider_for_role("attack") == "cursor"
+    assert config.provider_for_role("judge") == "openai"
+    with pytest.raises(ModelConfigurationError, match="build_role_client"):
+        config.for_role("attack")
+    assert config.for_role("judge").model == "judge"
+
+
+def test_experiment_model_config_accepts_cur_aliases(tmp_path):
+    path = tmp_path / "models.md"
+    path.write_text(
+        "cur_attack_model: grok-4.5\n"
+        "cur_api_key: crsr_alias\n"
+        "defense_model: defender\n"
+        "judge_model: judge\n"
+        "base_url: https://gateway.example/v1\n"
+        "api_key: test-secret\n",
+        encoding="utf-8",
+    )
+
+    config = ExperimentModelConfig.from_file(path)
+
+    assert config.attack_provider == "cursor"
+    assert config.attack_model == "grok-4.5"
+    assert config.cursor_api_key == "crsr_alias"
+
+
+def test_cursor_attack_provider_requires_defense_model(tmp_path):
+    path = tmp_path / "models.md"
+    path.write_text(
+        "attack_provider: cursor\n"
+        "attack_model: grok-4.5\n"
+        "cursor_api_key: crsr_test\n"
+        "judge_model: judge\n"
+        "base_url: https://gateway.example/v1\n"
+        "api_key: test-secret\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelConfigurationError, match="defense_model"):
+        ExperimentModelConfig.from_file(path)
+
+
+def test_build_role_client_uses_cursor_for_attack():
+    config = ExperimentModelConfig(
+        attack_model="grok-4.5",
+        defense_model="defender",
+        judge_model="judge",
+        base_url="https://gateway.example/v1",
+        api_key="test-secret",
+        attack_provider="cursor",
+        cursor_api_key="crsr_test",
+    )
+
+    attack = build_role_client(config, "attack")
+    judge = build_role_client(config, "judge")
+
+    assert isinstance(attack, CursorChatClient)
+    assert attack.model == "grok-4.5"
+    assert isinstance(judge, OpenAICompatibleChatClient)
+
+
+def test_cursor_chat_client_returns_text_via_injected_prompt_fn():
+    client = CursorChatClient(
+        model="grok-4.5",
+        api_key="crsr_test",
+        prompt_fn=lambda prompt: '{"payload": "injected"}',
+    )
+
+    response = client.complete(
+        [
+            {"role": "system", "content": "Return JSON"},
+            {"role": "user", "content": "Generate"},
+        ],
+        tools=[],
+    )
+
+    assert response.content == '{"payload": "injected"}'
+
+
+def test_cursor_chat_client_rejects_tools():
+    client = CursorChatClient(
+        model="grok-4.5",
+        api_key="crsr_test",
+        prompt_fn=lambda prompt: "ok",
+    )
+
+    with pytest.raises(ModelResponseError, match="tools=\\[\\]"):
+        client.complete([{"role": "user", "content": "hi"}], [{"type": "function"}])
 
 
 def test_openai_compatible_client_parses_one_tool_call():
@@ -256,6 +474,54 @@ def test_retryable_model_error_is_retried():
     response = client.complete([{"role": "user", "content": "Task"}], [])
 
     assert response.content == "Done"
+    assert transport.call_count == 2
+
+
+def test_empty_assistant_response_is_retried_with_model_context():
+    empty = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": None, "reasoning_content": "thinking"},
+            }
+        ]
+    }
+    transport = SequenceTransport(
+        [empty, {"choices": [{"message": {"content": "Done"}}]}]
+    )
+    client = OpenAICompatibleChatClient(
+        ModelConfig("test-model", "https://gateway.example/v1", "secret"),
+        max_retries=1,
+        retry_delay=0,
+        transport=transport,
+    )
+
+    response = client.complete([{"role": "user", "content": "Task"}], [])
+
+    assert response.content == "Done"
+    assert transport.call_count == 2
+    assert transport.max_tokens_seen == [1024, 2048]
+
+
+def test_repeated_empty_response_reports_model_and_finish_reason():
+    empty = {
+        "choices": [
+            {"finish_reason": "length", "message": {"content": None}}
+        ]
+    }
+    transport = SequenceTransport([empty, empty])
+    client = OpenAICompatibleChatClient(
+        ModelConfig("test-model", "https://gateway.example/v1", "secret"),
+        max_retries=1,
+        retry_delay=0,
+        transport=transport,
+    )
+
+    with pytest.raises(
+        ModelResponseError, match="model 'test-model'.*finish_reason='length'"
+    ):
+        client.complete([{"role": "user", "content": "Task"}], [])
+
     assert transport.call_count == 2
 
 

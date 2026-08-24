@@ -37,7 +37,7 @@ def test_llm_agent_round_trips_tool_result_and_completes():
                 tool_call=ModelToolCall(
                     id="call-1",
                     name="read_email",
-                    arguments={"email_id": "e1"},
+                    arguments={"email_id": "e3"},
                 )
             ),
             ModelResponse(
@@ -55,6 +55,7 @@ def test_llm_agent_round_trips_tool_result_and_completes():
     tool_message = next(m for m in second_messages if m["role"] == "tool")
     assert tool_message["tool_call_id"] == "call-1"
     assert "Friday 10:00" in tool_message["content"]
+    assert "room-ops@northline.io" in tool_message["content"]
 
 
 def test_llm_agent_model_view_excludes_hidden_evaluation_fields():

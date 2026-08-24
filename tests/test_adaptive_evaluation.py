@@ -39,10 +39,11 @@ class FakeOptimizer:
 
 
 def test_adaptive_runner_updates_only_train_then_freezes_for_heldout():
-    episodes = [
-        *load_episodes_dir(ROOT / "episodes" / "train"),
-        *load_episodes_dir(ROOT / "episodes" / "heldout"),
-    ]
+    train_episodes = load_episodes_dir(ROOT / "episodes" / "train")
+    heldout_episodes = load_episodes_dir(ROOT / "episodes" / "heldout")
+    episodes = [*train_episodes, *heldout_episodes]
+    train_rounds = 2
+    train_matches = len(train_episodes) * train_rounds
     attacks = FakeAttackGenerator()
     optimizer = FakeOptimizer()
     runner = AdaptiveEvaluationRunner(
@@ -60,17 +61,18 @@ def test_adaptive_runner_updates_only_train_then_freezes_for_heldout():
     report = runner.run(
         episodes,
         initial_harness=DefenseHarness("baseline", "Initial boundary."),
-        train_rounds=2,
+        train_rounds=train_rounds,
     )
 
-    assert [result.harness_before.version for result in report.train_history] == [0, 1]
-    assert report.final_harness.version == 2
-    assert report.heldout_results[0].harness_before.version == 2
-    assert len(optimizer.calls) == 2
-    assert attacks.harnesses == [
-        "Initial boundary.",
-        "Initial boundary.\nUpdated boundary.",
-        "Initial boundary.\nUpdated boundary.\nUpdated boundary.",
-    ]
+    assert [result.harness_before.version for result in report.train_history] == list(
+        range(train_matches)
+    )
+    assert report.final_harness.version == train_matches
+    assert all(
+        result.harness_before.version == train_matches
+        for result in report.heldout_results
+    )
+    assert len(optimizer.calls) == train_matches
+    assert len(attacks.harnesses) == train_matches + len(heldout_episodes)
     assert report.train.attack_success_rate == 0.0
     assert report.heldout.benign_utility == 1.0

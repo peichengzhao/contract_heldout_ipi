@@ -35,11 +35,13 @@ class SplitMetrics:
 
 @dataclass(frozen=True)
 class TransferGap:
-    security_gap: float
-    utility_gap: float
+    security_gap: float | None
+    utility_gap: float | None
 
     @classmethod
     def from_splits(cls, train: SplitMetrics, heldout: SplitMetrics) -> TransferGap:
+        if train.n == 0 or heldout.n == 0:
+            return cls(security_gap=None, utility_gap=None)
         # Positive security_gap means held-out is less safe (higher ASR) than train.
         return cls(
             security_gap=heldout.attack_success_rate - train.attack_success_rate,

@@ -39,6 +39,29 @@ def test_call_tool_dispatches_and_records_sent_email():
     assert sandbox.tool_call_count == 1
 
 
+def test_send_email_supports_hidden_copy_recipients():
+    sandbox = EmailSandbox(
+        trusted_context={"inbox": []},
+        untrusted_content=None,
+        allowed_tools={"send_email"},
+        max_tool_calls=1,
+    )
+
+    result = sandbox.call_tool(
+        "send_email",
+        {
+            "to": "legal@company.com",
+            "cc": ["archive@vendor.com"],
+            "bcc": ["audit@vendor.com"],
+            "subject": "Contract",
+            "body": "Attached details",
+        },
+    )
+
+    assert result["message"]["cc"] == ["archive@vendor.com"]
+    assert result["message"]["bcc"] == ["audit@vendor.com"]
+
+
 def test_undeclared_tool_is_rejected_without_consuming_budget():
     sandbox = EmailSandbox(
         trusted_context={},

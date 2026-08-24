@@ -16,11 +16,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from contract_heldout_ipi.agent import (  # noqa: E402
+    ChatModelClient,
     ExperimentModelConfig,
     LLMAgent,
     ModelClientError,
     ModelConfigurationError,
-    OpenAICompatibleChatClient,
+    ModelRole,
+    build_role_client,
 )
 from contract_heldout_ipi.attack import DynamicAttackGenerator  # noqa: E402
 from contract_heldout_ipi.contract.loader import load_episodes_dir  # noqa: E402
@@ -44,8 +46,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help=(
             "File containing attack_model:, defense_model:, judge_model:, "
-            "base_url:, and api_key:. If omitted, role model environment "
-            "variables plus OPENAI_BASE_URL and OPENAI_API_KEY are used."
+            "base_url:, and api_key:. Optional attack_provider: cursor with "
+            "cursor_api_key: (or cur_api_key:/cur_attack_model:) to run the "
+            "attack model via the Cursor SDK. If omitted, environment "
+            "variables are used."
         ),
     )
     parser.add_argument(
@@ -57,7 +61,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--attack-temperature", type=float, default=0.7)
-    parser.add_argument("--defense-temperature", type=float, default=0.0)
+    parser.add_argument(
+        "--task-agent-temperature",
+        "--defense-temperature",
+        dest="task_agent_temperature",
+        type=float,
+        default=0.0,
+    )
     parser.add_argument("--judge-temperature", type=float, default=0.0)
     parser.add_argument(
         "--output",
@@ -112,10 +122,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for defense_name in defense_names:
         defense = get_defense(defense_name)
-        defense_client = _client(
+        task_agent_client = _client(
             config,
-            "defense",
-            temperature=args.defense_temperature,
+            "task_agent",
+            temperature=args.task_agent_temperature,
             args=args,
         )
         judge = LLMEpisodeJudge(
@@ -129,7 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             reports[defense_name] = evaluate_episodes(
                 attacked_episodes,
-                lambda episode, client=defense_client, defense=defense: LLMAgent(
+                lambda episode, client=task_agent_client, defense=defense: LLMAgent(
                     client, defense
                 ),
                 score_episode=judge.score,
@@ -147,13 +157,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _client(
     config: ExperimentModelConfig,
-    role: str,
+    role: ModelRole,
     *,
     temperature: float,
     args: argparse.Namespace,
-) -> OpenAICompatibleChatClient:
-    return OpenAICompatibleChatClient(
-        config.for_role(role),
+) -> ChatModelClient:
+    return build_role_client(
+        config,
+        role,
         timeout=args.timeout,
         temperature=temperature,
         max_tokens=args.max_tokens,
@@ -175,9 +186,13 @@ def _print_reports(reports: dict[str, EvaluationReport]) -> None:
                 f"{metrics.benign_utility:>8.3f}"
             )
         print(
-            f"{'':24} Security Gap={report.gap.security_gap:.3f}  "
-            f"Utility Gap={report.gap.utility_gap:.3f}"
+            f"{'':24} Security Gap={_format_gap(report.gap.security_gap)}  "
+            f"Utility Gap={_format_gap(report.gap.utility_gap)}"
         )
+
+
+def _format_gap(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.3f}"
 
 
 def _write_json(
@@ -190,8 +205,10 @@ def _write_json(
     payload = {
         "models": {
             "attack_model": config.attack_model,
+            "attack_provider": config.attack_provider,
             "defense_model": config.defense_model,
             "judge_model": config.judge_model,
+            "task_agent_model": config.for_role("task_agent").model,
         },
         "generated_attacks": generated_attacks,
         "reports": {name: asdict(report) for name, report in reports.items()},

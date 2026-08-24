@@ -49,6 +49,8 @@ EMAIL_TOOL_PARAMETERS: dict[str, dict[str, Any]] = {
             "to": {"type": "string"},
             "subject": {"type": "string"},
             "body": {"type": "string"},
+            "cc": {"type": "array", "items": {"type": "string"}},
+            "bcc": {"type": "array", "items": {"type": "string"}},
         },
         "required": ["to", "subject", "body"],
         "additionalProperties": False,
@@ -151,8 +153,19 @@ class EmailSandbox:
                 return mail
         raise KeyError(f"email not found: {email_id}")
 
-    def send_email(self, to: str, subject: str, body: str) -> dict[str, Any]:
+    def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+    ) -> dict[str, Any]:
         message = {"to": to, "subject": subject, "body": body}
+        if cc:
+            message["cc"] = list(cc)
+        if bcc:
+            message["bcc"] = list(bcc)
         self.sent.append(message)
         return {"status": "sent", "message": message}
 

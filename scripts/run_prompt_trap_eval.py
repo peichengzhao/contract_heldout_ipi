@@ -16,12 +16,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from contract_heldout_ipi.agent import (  # noqa: E402
+    ChatModelClient,
     EpisodeRunner,
     ExperimentModelConfig,
     LLMAgent,
     ModelClientError,
     ModelConfigurationError,
-    OpenAICompatibleChatClient,
+    ModelRole,
+    build_role_client,
 )
 from contract_heldout_ipi.attack import EmailPromptScenarioSynthesizer  # noqa: E402
 from contract_heldout_ipi.contract.loader import load_episode  # noqa: E402
@@ -52,8 +54,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help=(
             "File containing attack_model:, judge_model:, base_url:, and api_key:. "
-            "Optional defense_model:/agent_model:. If omitted, environment variables "
-            "are used."
+            "Optional defense_model:/task_agent_model: (legacy agent_model:) and "
+            "attack_provider: cursor with "
+            "cursor_api_key:. If omitted, environment variables are used."
         ),
     )
     parser.add_argument(
@@ -64,7 +67,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Defense baseline to run. Defaults to no-defense so attack/judge "
             "can be validated before comparing defenses. defense_model may be "
             "omitted in the config; it then falls back to attack_model. "
-            "Optional agent_model selects the task-executing model."
+            "Optional task_agent_model selects the task-executing model."
         ),
     )
     parser.add_argument("--timeout", type=float, default=180.0)
@@ -78,8 +81,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Override attack_model from config for this run only.",
     )
     parser.add_argument(
+        "--task-agent-model",
         "--agent-model",
-        help="Override agent_model from config for this run only.",
+        dest="task_agent_model",
+        help="Override task_agent_model from config for this run only.",
     )
     parser.add_argument(
         "--judge-model",
@@ -115,7 +120,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         judge_model=args.judge_model or config.judge_model,
         base_url=config.base_url,
         api_key=config.api_key,
-        agent_model=args.agent_model or config.agent_model,
+        agent_model=config.agent_model,
+        rule_judge_model=config.rule_judge_model,
+        optimizer_model=config.optimizer_model,
+        task_agent_model=args.task_agent_model or config.task_agent_model,
+        deepseek_base_url=config.deepseek_base_url,
+        deepseek_api_key=config.deepseek_api_key,
+        attack_provider=config.attack_provider,
+        cursor_api_key=config.cursor_api_key,
     )
 
     if args.episode is not None:
@@ -153,7 +165,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for defense_name in defense_names:
         defense = get_defense(defense_name)
         agent_client = _client(
-            config, "agent", temperature=args.defense_temperature, args=args
+            config, "task_agent", temperature=args.defense_temperature, args=args
         )
         agent = LLMAgent(agent_client, defense)
         try:
@@ -209,13 +221,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _client(
     config: ExperimentModelConfig,
-    role: str,
+    role: ModelRole,
     *,
     temperature: float,
     args: argparse.Namespace,
-) -> OpenAICompatibleChatClient:
-    return OpenAICompatibleChatClient(
-        config.for_role(role),  # type: ignore[arg-type]
+) -> ChatModelClient:
+    return build_role_client(
+        config,
+        role,
         timeout=args.timeout,
         temperature=temperature,
         max_tokens=args.max_tokens,
@@ -235,7 +248,8 @@ def _write_partial(
     payload = {
         "models": {
             "attack_model": config.attack_model,
-            "agent_model": config.agent_model or config.defense_model,
+            "attack_provider": config.attack_provider,
+            "task_agent_model": config.for_role("task_agent").model,
             "defense_model": config.defense_model,
             "judge_model": config.judge_model,
         },
@@ -255,7 +269,7 @@ def _print_summary(
     results: dict[str, dict],
     config: ExperimentModelConfig,
 ) -> None:
-    agent_model = config.agent_model or config.defense_model
+    agent_model = config.for_role("task_agent").model
     print(f"Prompt: {prompt}")
     print(f"Episode: {episode_id}")
     print(f"Agent model: {agent_model}")

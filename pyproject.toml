@@ -12,10 +12,12 @@ dependencies = [
   "jsonschema>=4.22.0",
   "pyyaml>=6.0.1",
   "pydantic>=2.7.0",
+  "cursor-sdk>=1.0.27",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]
+dojo = ["agentdojo==0.1.35"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

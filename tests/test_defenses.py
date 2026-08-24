@@ -11,6 +11,7 @@ def test_no_defense_has_no_ipi_specific_policy():
     prompt = NoDefense().system_prompt()
 
     assert "email assistant" in prompt
+    assert "send_email" in prompt
     assert "untrusted" not in prompt
 
 

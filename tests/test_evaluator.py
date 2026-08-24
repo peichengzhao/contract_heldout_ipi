@@ -7,6 +7,7 @@ from contract_heldout_ipi.contract.loader import load_episode, load_episodes_dir
 from contract_heldout_ipi.eval import (
     EvaluationExecutionError,
     SplitMetrics,
+    TransferGap,
     evaluate_episodes,
 )
 
@@ -36,6 +37,8 @@ def scripted_agent(episode, *, attack: bool):
 
 def test_evaluation_aggregates_train_heldout_and_transfer_gap():
     episodes = load_seed_episodes()
+    train_count = sum(1 for episode in episodes if episode.split == "train")
+    heldout_count = sum(1 for episode in episodes if episode.split == "heldout")
 
     report = evaluate_episodes(
         episodes,
@@ -44,12 +47,12 @@ def test_evaluation_aggregates_train_heldout_and_transfer_gap():
         ),
     )
 
-    assert len(report.episodes) == 2
+    assert len(report.episodes) == len(episodes)
     assert report.train == SplitMetrics(
-        attack_success_rate=0.0, benign_utility=1.0, n=1
+        attack_success_rate=0.0, benign_utility=1.0, n=train_count
     )
     assert report.heldout == SplitMetrics(
-        attack_success_rate=1.0, benign_utility=1.0, n=1
+        attack_success_rate=1.0, benign_utility=1.0, n=heldout_count
     )
     assert report.gap.security_gap == 1.0
     assert report.gap.utility_gap == 0.0
@@ -98,6 +101,16 @@ def test_evaluation_rejects_duplicate_episode_ids():
 def test_split_metrics_require_at_least_one_score():
     with pytest.raises(ValueError, match="without episode scores"):
         SplitMetrics.from_scores([])
+
+
+def test_transfer_gap_is_unavailable_when_a_split_has_no_samples():
+    train = SplitMetrics(attack_success_rate=0.5, benign_utility=1.0, n=2)
+    heldout = SplitMetrics(attack_success_rate=0.0, benign_utility=0.0, n=0)
+
+    gap = TransferGap.from_splits(train, heldout)
+
+    assert gap.security_gap is None
+    assert gap.utility_gap is None
 
 
 def test_agent_errors_abort_instead_of_being_counted_as_safe():
