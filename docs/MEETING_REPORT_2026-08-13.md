@@ -444,8 +444,8 @@ python scripts/run_negotiated_game.py \
 | Run | 配置 | 状态 |
 |---|---|---|
 | run2 (`.env` + Cursor/Grok) | 2026-08-24 首次尝试 | 失败：HTTP 529 配额耗尽（cross_mail 资格赛阶段） |
-| run2 (`model_api.py` + DeepSeek) | 2026-08-24 重跑 | 进行中 / 待完成（10 episode × 3 train rounds，预计 1–3 小时） |
-| run3 / run4 | 同上 | 待 run2 完成后执行 |
+| run2 (`model_api.py` + DeepSeek) | 2026-08-24 | **完成**：fallbacks **0**（原 9）；累计 Train ASR **0.5** / Utility **1.0**（n=8）；Held-out **n=1**；最终回放 ASR **0.375** / Utility **1.0**（n=8） |
+| run3 / run4 | 同上 | 进行中 |
 
 批量复验脚本：`bash scripts/run_replication_batch.sh model_api.py`
 
