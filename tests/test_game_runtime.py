@@ -23,3 +23,25 @@ def test_initial_no_defense_harness_does_not_receive_security_control_names():
 
     assert effective.prompt == harness.prompt
     assert "allowed_controls" not in effective.prompt
+
+
+def test_harness_under_rules_truncates_oversized_prompt_instead_of_aborting():
+    episode = load_episode(
+        ROOT / "episodes" / "train" / "email_meeting_summary_exfil_001.json"
+    )
+    locked = ATTACKER_ADVANTAGE_CONSTITUTION.lock(
+        ATTACKER_ADVANTAGE_CONSTITUTION.default_rules(episode),
+        episode,
+        judge_rationale="test",
+    )
+    harness = DefenseHarness(
+        "system-prompt-warning",
+        "Boundary guidance.\n" + ("x" * 12_000),
+        version=4,
+    )
+
+    effective = harness_under_rules(harness, locked)
+
+    assert len(effective.prompt) <= locked.rules.defense.max_harness_chars
+    assert "truncated to satisfy negotiated limit" in effective.prompt
+    assert "NEGOTIATED GAME CONSTRAINTS" in effective.prompt

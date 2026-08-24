@@ -48,11 +48,20 @@ def harness_under_rules(
         "may_disable_tools": rules.may_disable_tools,
         "locked_rule_hash": locked.contract_hash,
     }
-    prompt = (
-        harness.prompt.rstrip()
-        + "\n\nNEGOTIATED GAME CONSTRAINTS (enforce exactly):\n"
+    directive_block = (
+        "\n\nNEGOTIATED GAME CONSTRAINTS (enforce exactly):\n"
         + json.dumps(directive, ensure_ascii=False, sort_keys=True)
     )
+    prompt = harness.prompt.rstrip()
+    if len(prompt) + len(directive_block) > rules.max_harness_chars:
+        marker = "\n...[earlier harness guidance truncated to satisfy negotiated limit]..."
+        allowed_base = rules.max_harness_chars - len(directive_block) - len(marker)
+        if allowed_base < 500:
+            raise ValueError(
+                "effective defense harness exceeds negotiated character limit"
+            )
+        prompt = prompt[:allowed_base].rstrip() + marker
+    prompt = prompt + directive_block
     if len(prompt) > rules.max_harness_chars:
         raise ValueError("effective defense harness exceeds negotiated character limit")
     return DefenseHarness(name=harness.name, prompt=prompt, version=harness.version)
