@@ -11,6 +11,7 @@ from contract_heldout_ipi.agent import ModelClientError
 
 from .dynamic_attack import DojoAttackPlan, DojoDynamicAttackGenerator
 from .evaluator import DojoMetrics, _safe_error
+from .injection import build_injection_map
 from .scoring import aggregate_injection_metrics, injection_succeeded
 from .trace import CapturingPipeline, DojoExecutionTrace
 
@@ -241,7 +242,7 @@ class DojoQualificationRunner:
                 continue
             fingerprints.add(fingerprint)
             used_strategies.add(plan.strategy)
-            injections = {vector: plan.payload for vector in plan.target_vectors}
+            injections = build_injection_map(plan.payload, plan.target_vectors)
             result = _execute_native(
                 self.suite,
                 self.qualification_pipeline,
