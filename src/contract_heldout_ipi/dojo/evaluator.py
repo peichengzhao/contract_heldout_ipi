@@ -8,6 +8,7 @@ from importlib.metadata import version
 from typing import Any, Sequence
 
 from .adapter import load_suite, select_task_ids
+from .scoring import aggregate_injection_metrics, injection_succeeded
 
 
 @dataclass(frozen=True)
@@ -66,8 +67,10 @@ def evaluate_fixed_defense(
 ) -> DojoEvaluationReport:
     """Run selected tasks in fresh native AgentDojo environments.
 
-    ``security=True`` is AgentDojo's safe outcome. This bridge deliberately
-    reports ASR as ``1 - security_rate`` and excludes errored cases from both.
+    AgentDojo's second return value is the injection checker result:
+    ``True`` means the injection goal was achieved. This bridge stores that raw
+    value on ``security`` and sets ``attack_success`` to the same boolean.
+    Reported ``security_rate`` is the defense rate ``1 - ASR``.
     """
     suite = load_suite(benchmark_version, suite_name)
     selected_users = select_task_ids(
@@ -192,7 +195,11 @@ def _run_case(
         injection_task_id=(injection_task.ID if injection_task is not None else None),
         utility=bool(utility),
         security=(bool(security) if injection_task is not None else None),
-        attack_success=(not bool(security) if injection_task is not None else None),
+        attack_success=(
+            injection_succeeded(security)
+            if injection_task is not None
+            else None
+        ),
     )
 
 
@@ -216,15 +223,16 @@ def _metrics(cases: Sequence[DojoCaseResult], *, injected: bool) -> DojoMetrics:
             security_rate=None,
             attack_success_rate=None,
         )
-    security_values = [case.security for case in valid if case.security is not None]
-    if not security_values:
+    injection_flags = [
+        bool(case.security)
+        for case in valid
+        if case.security is not None and case.attack_success is not None
+    ]
+    if not injection_flags:
         security_rate = None
         asr = None
     else:
-        security_rate = sum(bool(value) for value in security_values) / len(
-            security_values
-        )
-        asr = 1.0 - security_rate
+        asr, security_rate = aggregate_injection_metrics(injection_flags)
     return DojoMetrics(
         n=len(valid),
         errors=errors,

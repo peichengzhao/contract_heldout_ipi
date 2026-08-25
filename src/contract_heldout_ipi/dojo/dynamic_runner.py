@@ -11,6 +11,7 @@ from contract_heldout_ipi.agent import ModelClientError
 
 from .dynamic_attack import DojoAttackPlan, DojoDynamicAttackGenerator
 from .evaluator import DojoMetrics, _safe_error
+from .scoring import aggregate_injection_metrics, injection_succeeded
 from .trace import CapturingPipeline, DojoExecutionTrace
 
 
@@ -332,7 +333,11 @@ def _execute_native(
     return DojoNativeResult(
         utility=bool(utility),
         security=(bool(security) if injection_task is not None else None),
-        attack_success=(not bool(security) if injection_task is not None else None),
+        attack_success=(
+            injection_succeeded(security)
+            if injection_task is not None
+            else None
+        ),
         trace=capture.last_trace,
     )
 
@@ -347,5 +352,6 @@ def _native_metrics(
     utility = sum(bool(result.utility) for result in valid) / len(valid)
     if not injected:
         return DojoMetrics(len(valid), errors, utility, None, None)
-    security = sum(bool(result.security) for result in valid) / len(valid)
-    return DojoMetrics(len(valid), errors, utility, security, 1.0 - security)
+    injection_flags = [bool(result.attack_success) for result in valid]
+    asr, defense_rate = aggregate_injection_metrics(injection_flags)
+    return DojoMetrics(len(valid), errors, utility, defense_rate, asr)

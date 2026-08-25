@@ -148,8 +148,8 @@ class FakeSuite:
             return True, True
         payload = next(iter(injections.values()))
         if pipeline.name == "qualification":
-            return True, "wins" not in payload
-        return True, True
+            return True, "wins" in payload
+        return True, False
 
 
 def test_runner_feeds_failure_to_next_candidate_and_admits_only_success() -> None:

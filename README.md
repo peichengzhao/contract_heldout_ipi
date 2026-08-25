@@ -232,8 +232,9 @@ without relying on an LLM judgment.
 The repository can now use AgentDojo as a concrete external dataset instead of
 only the hand-written email episodes. The integration keeps AgentDojo's native
 workspace environment, tools, attack injection vectors, and deterministic
-Utility/Security checkers. In AgentDojo, `security=true` means the injection was
-prevented; this project reports `ASR = 1 - security_rate`.
+Utility/Security checkers. In AgentDojo, the native injection checker returns `True` when the injection
+goal was achieved. This project reports `ASR` as the mean of that checker and
+`Security` as `1 - ASR`.
 
 Install the pinned optional dependency and inspect the task manifest without
 making any model calls:

@@ -45,11 +45,11 @@ def test_select_task_ids_validates_and_limits() -> None:
         select_task_ids(available, ("missing",), limit=1, kind="task")
 
 
-def test_injected_metrics_invert_agentdojo_security_and_exclude_errors() -> None:
+def test_injected_metrics_use_native_injection_checker_and_exclude_errors() -> None:
     metrics = _metrics(
         [
-            DojoCaseResult("u0", "i0", True, True, False),
-            DojoCaseResult("u1", "i0", True, False, True),
+            DojoCaseResult("u0", "i0", True, True, True),
+            DojoCaseResult("u1", "i0", True, False, False),
             DojoCaseResult("u2", "i0", None, None, None, "timeout"),
         ],
         injected=True,
@@ -58,8 +58,8 @@ def test_injected_metrics_invert_agentdojo_security_and_exclude_errors() -> None
     assert metrics.n == 2
     assert metrics.errors == 1
     assert metrics.utility == 1.0
-    assert metrics.security_rate == 0.5
     assert metrics.attack_success_rate == 0.5
+    assert metrics.security_rate == 0.5
 
 
 def test_run_case_delegates_to_native_suite_checker() -> None:
@@ -93,7 +93,7 @@ def test_run_case_delegates_to_native_suite_checker() -> None:
     assert suite.called_with == (pipeline, task, injection, {"vector": "payload"})
     assert result.utility is True
     assert result.security is False
-    assert result.attack_success is True
+    assert result.attack_success is False
 
 
 def test_pipeline_uses_task_agent_model_and_deepseek_route_without_calling_api() -> None:

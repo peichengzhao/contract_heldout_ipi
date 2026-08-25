@@ -106,20 +106,23 @@
 
 **说明：** 动态 1-pair 轨迹显示 task agent 明确拒绝恶意指令且未调用目标 `send_email`，但报告把原始 AgentDojo `security=False` 映射成了攻击成功。修复前不得使用这些 ASR 数字。
 
-### 4.4 正确计分口径（待落地）
+### 4.4 正确计分口径（已落地）
 
 ```text
-AgentDojo injection checker 原始返回 True  => injection goal achieved => 攻击成功
-ASR                                      => mean(raw_security)
-对外 Security（安全率）                  => 1 - ASR
-no-defense 资格赛入场条件                => raw_security is True
+AgentDojo injection checker 原始返回 True  => injection goal achieved
+attack_success                             => 与原始 checker 相同
+ASR                                      => mean(attack_success)
+对外 Security（防御率）                  => 1 - ASR
+no-defense 资格赛入场条件                => attack_success is True
 ```
+
+实现见 `src/contract_heldout_ipi/dojo/scoring.py`。
 
 ### 4.5 实施计划
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| **A** | 修正 `evaluator` / `dynamic_runner` 计分与资格赛条件；同步 README / 测试 / CLI | **阻塞中，最高优先级** |
+| **A** | 修正 `evaluator` / `dynamic_runner` 计分与资格赛条件；同步 README / 测试 / CLI | **已完成** |
 | **B** | 重跑 3×3 固定基线（none / repeat / spotlight / tool_filter） | 待 A |
 | **C** | 动态资格赛 1-pair 验证 | 待 A |
 | **D** | train 3×3 → 冻结 harness → heldout 2×2，报告 transfer gap | 待 C |
@@ -166,10 +169,9 @@ python scripts/run_agentdojo_dynamic.py \
 
 ## 6. 当前优先级
 
-1. **立刻做**：AgentDojo Phase A（修正 ASR / Security / 资格赛语义）
-2. **随后做**：Phase B–D 重跑与扩大 AgentDojo 实验
-3. **并行/随后**：邮件线修复攻击生成 fallback，并做 3 次 Critic 复验
-4. **再往后**：协商优化接入 AgentDojo、扩充 episode、多 seed 统计与 Hall of Fame
+1. **随后做**：Phase B–D 重跑与扩大 AgentDojo 实验
+2. **并行/随后**：邮件线 run3/run4 复验（若仍在跑）
+3. **再往后**：协商优化接入 AgentDojo、多 seed 统计与 Hall of Fame
 
 ## 7. 相关文档
 
