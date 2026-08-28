@@ -147,7 +147,7 @@
 |---|---|---:|---:|---:|---|
 | heldout 基线 | deepseek / deepseek | 3 cand | 0/4 | N/A | Phase D/E |
 | **heldout ablation** | **gpt-5.6-sol / deepseek** | **8 cand** | **1/4 (0.25)** | 0.000 (n=1) | `user_task_5×injection_task_3` 首次 heldout 入场 |
-| train ablation | gpt-5.6-sol / deepseek | 8 cand | 进行中 | — | `agentdojo_ablation_train_3x3.json` |
+| train ablation | gpt-5.6-sol / deepseek | 8 cand | **5/9 (0.556)** | **0.600 (n=5)** | Utility 0.800；异质 attack model 显著提升 admitted ASR |
 
 #### qual/replay 一致性诊断（2026-08-28）
 
