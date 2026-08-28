@@ -149,6 +149,23 @@
 | **heldout ablation** | **gpt-5.6-sol / deepseek** | **8 cand** | **1/4 (0.25)** | 0.000 (n=1) | `user_task_5×injection_task_3` 首次 heldout 入场 |
 | train ablation | gpt-5.6-sol / deepseek | 8 cand | **5/9 (0.556)** | **0.600 (n=5)** | Utility 0.800；异质 attack model 显著提升 admitted ASR |
 
+#### Phase E + 攻击 ablation（2026-08-28）
+
+| 实验 | Qualification | Admitted ASR / Utility / Security | Harness | 结果文件 |
+|---|---:|---|---|---|
+| coevolution train (ablation) | 3/9 (0.333) | 0.333 / 1.000 / 0.667 (n=3) | v0→v1（1 更新） | `agentdojo_coevolution_ablation_train_3x3.json` |
+| coevolution heldout（冻结 train harness） | 0/4 | N/A | 冻结 v1 | `agentdojo_coevolution_ablation_heldout_2x2.json` |
+
+**对比：**
+
+| 设置 | train qual | train admitted ASR | heldout qual |
+|---|---:|---:|---:|
+| 同质 deepseek（Phase E） | 5/9 | 0.200 (n=5) | 0/4 |
+| 异质 ablation（仅 dynamic） | 5/9 | **0.600** (n=5) | **1/4** |
+| 异质 ablation + coevolution | 3/9 | 0.333 (n=3) | 0/4 |
+
+**解读：** 异质 attack model 是提升对抗强度的关键；co-evolution 在 train 上将 admitted Utility 拉到 1.0，但 qual 率下降（攻击可见 evolving harness）。heldout 上冻结 harness 未能复现 dynamic ablation 的 1/4 入场（n 小、随机性）。qual/replay 诊断（3 admitted pair）：consistent **2/3**（优于 deepseek Phase D 的 0/2）。
+
 #### qual/replay 一致性诊断（2026-08-28）
 
 对 Phase D 2 个 admitted pair 各 replay 3 次（no-defense）：**consistent 0/2**，replay ASR ≈ 0.33。说明正式 replay 与资格赛结果存在显著随机漂移，报告 ASR 前应多次 replay 或固定 seed。
