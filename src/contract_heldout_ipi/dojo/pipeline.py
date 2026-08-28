@@ -77,8 +77,21 @@ def build_dojo_pipeline(
             # only implement the standard `system` role.
             if converted.get("role") == "developer":
                 converted = {**converted, "role": "system"}
+            if (
+                converted.get("role") == "assistant"
+                and isinstance(message, dict)
+                and message.get("reasoning_content")
+            ):
+                converted["reasoning_content"] = message["reasoning_content"]
             converted_messages.append(converted)
         return converted_messages
+
+    def _assistant_message_from_completion(message: Any) -> ChatMessage:
+        output = _openai_to_assistant_message(message)
+        reasoning = getattr(message, "reasoning_content", None)
+        if isinstance(reasoning, str) and reasoning:
+            return {**output, "reasoning_content": reasoning}
+        return output
 
     class BoundedOpenAILLM(OpenAILLM):
         """Pinned AgentDojo OpenAI element with an explicit output budget."""
@@ -108,7 +121,7 @@ def build_dojo_pipeline(
                 reasoning_effort=self.reasoning_effort or NOT_GIVEN,
                 max_tokens=self.max_output_tokens,
             )
-            output = _openai_to_assistant_message(completion.choices[0].message)
+            output = _assistant_message_from_completion(completion.choices[0].message)
             return (
                 query,
                 runtime,
@@ -145,7 +158,7 @@ def build_dojo_pipeline(
                 temperature=self.temperature or NOT_GIVEN,
                 max_tokens=max_tokens,
             )
-            output = _openai_to_assistant_message(completion.choices[0].message)
+            output = _assistant_message_from_completion(completion.choices[0].message)
             selected_tools = {}
             output_text = (
                 get_text_content_as_str(output["content"])

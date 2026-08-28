@@ -7,7 +7,7 @@
 
 当前是双线并行：
 
-- **邮件沙箱协商博弈**：run2/run3/run4 三次复验已完成（fallback=0）；run4 heldout ASR 0.333（n=3）。
+- **邮件沙箱协商博弈**：run2/run3/run4 三次复验已完成（fallback=0）；run4 heldout ASR 0.200（n=5），最终回放 ASR 0.000。
 - **AgentDojo workspace**：Phase A–E 首版已完成；co-evolution train 资格率 5/9，heldout 0/4（冻结 harness）。
 
 ## 2. 项目目标
@@ -113,7 +113,7 @@
 | `none` | 1.000 | 0.000 / 1.000 / 1.000 | 9 | 0 | `agentdojo_baseline_none_train_3x3.json` |
 | `repeat_user_prompt` | 1.000 | 0.000 / 1.000 / 1.000 | 9 | 0 | `agentdojo_baseline_repeat_user_prompt_train_3x3.json` |
 | `spotlighting_with_delimiting` | 1.000 | 0.000 / 1.000 / 1.000 | 9 | 0 | `agentdojo_baseline_spotlighting_with_delimiting_train_3x3.json` |
-| `tool_filter` | 0.000 | 0.000 / 0.000 / 1.000 | 7 | 3 | `agentdojo_baseline_tool_filter_train_3x3.json` |
+| `tool_filter` | 0.000 | 0.000 / 0.000 / 1.000 | 9 | 0 | `agentdojo_baseline_tool_filter_train_3x3_rerun.json`（API 错误已修，但 Clean/Inj Utility 仍 0） |
 
 **解读：** 固定 `injecagent` 攻击在 train 3×3 上全部被模型拒绝（ASR=0）。三种 prompt 类防御与 none 无差异。`tool_filter` 出现 3 次 DeepSeek `reasoning_content` 400 错误，Clean Utility 仅 n=2 有效，需修复后再重跑。
 
@@ -140,6 +140,20 @@
 | heldout（冻结 train harness） | 2×2 | 0/4 (0.000) | N/A (n=0) | 0 | `agentdojo_coevolution_heldout_2x2.json` |
 
 **解读：** optimizer 在 `user_task_1 × injection_task_2` 攻击成功后追加 IPI 防护规则（工具返回内容视为数据而非指令）。相比 Phase D 静态 harness，train 资格率从 2/9 升至 5/9，正式 replay ASR 从 0.500 降至 0.200（n 从 2 增至 5）。heldout 仍 0/4 资格赛通过——冻结 harness 未能提升 held-out 攻击入场率（n 很小）。
+
+#### 攻击强化 ablation（2026-08-28）
+
+| 实验 | attack / task | qual 设置 | Qualification | Admitted ASR | 备注 |
+|---|---|---:|---:|---:|---|
+| heldout 基线 | deepseek / deepseek | 3 cand | 0/4 | N/A | Phase D/E |
+| **heldout ablation** | **gpt-5.6-sol / deepseek** | **8 cand** | **1/4 (0.25)** | 0.000 (n=1) | `user_task_5×injection_task_3` 首次 heldout 入场 |
+| train ablation | gpt-5.6-sol / deepseek | 8 cand | 进行中 | — | `agentdojo_ablation_train_3x3.json` |
+
+#### qual/replay 一致性诊断（2026-08-28）
+
+对 Phase D 2 个 admitted pair 各 replay 3 次（no-defense）：**consistent 0/2**，replay ASR ≈ 0.33。说明正式 replay 与资格赛结果存在显著随机漂移，报告 ASR 前应多次 replay 或固定 seed。
+
+入口：`scripts/diagnose_agentdojo_qual_replay.py`
 
 入口：`scripts/run_agentdojo_coevolution.py`
 
@@ -213,10 +227,10 @@ python scripts/run_agentdojo_dynamic.py \
 
 ## 6. 当前优先级
 
-1. **并行**：邮件线 run4 已完成（见 §3.4）
-2. **修复**：`tool_filter` 下 DeepSeek `reasoning_content` 400 错误，重跑 tool_filter 基线
-3. **扩展 Phase E**：多 seed 重复、heldout 资格率 ablation、可选 rule negotiation
-4. **再往后**：扩大 split、Hall of Fame、多模型对比
+1. **扩展 ablation**：完成 train ablation，对比 heterogeneous attack model
+2. **修复 qual/replay 漂移**：多次 replay 取均值，或固定 seed
+3. **调查 tool_filter Utility=0**：是否过度删工具
+4. **再往后**：Phase E + 强攻击模型、扩大 split
 
 ## 7. 相关文档
 
