@@ -149,13 +149,17 @@ python scripts/run_agentdojo_dynamic.py \
 
 ### Phase E：接入防御优化与协商
 
-在动态资格赛指标正确后，接入既有游戏模块：
+**状态：首版已完成（2026-08-27）**
 
-- Optimizer 只在攻击成功或 Utility 失败时更新；
-- 防御可修改系统 prompt、工具输出包装、确认策略和允许的工具控制；
-- 禁止修改 AgentDojo 原生工具语义、环境事实、官方 injection goal、Utility/Security checker；
-- 攻击与防御协商 payload 预算、可修改的 injection vectors、确认预算、评分权重等可变规则；
-- heldout 始终不参与 optimizer 更新。
+已实现 `scripts/run_agentdojo_coevolution.py` + `DojoCoevolutionRunner` + `DojoHarnessOptimizer`：
+
+- Optimizer 只在攻击成功或 Utility 失败时更新 system prompt；
+- train 跑完后用 `--freeze-harness-from` 在 heldout 评估，heldout 不触发 optimizer；
+- 禁止修改 AgentDojo 原生工具语义、环境事实、官方 injection goal、checker。
+
+首跑结果（train 3×3）：qualification 5/9，admitted ASR 0.200（n=5），harness v0→v1；heldout 2×2：qualification 0/4。
+
+待扩展：rule negotiation、多 seed、tool_output 包装演化。
 
 ## 6. 结果文件与解释规范
 

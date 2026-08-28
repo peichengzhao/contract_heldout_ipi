@@ -14,6 +14,11 @@ from .evaluator import (
     DojoMetrics,
     evaluate_fixed_defense,
 )
+from .coevolution_runner import (
+    DojoCoevolutionReport,
+    DojoCoevolutionRunner,
+    DojoHarnessUpdateRecord,
+)
 from .dynamic_attack import (
     DOJO_ATTACK_STRATEGIES,
     DojoAttackPlan,
@@ -26,6 +31,7 @@ from .dynamic_runner import (
     DojoQualificationAttempt,
     DojoQualificationRunner,
 )
+from .optimizer import DojoHarnessOptimizer, DojoHarnessUpdate, should_update_harness
 from .pipeline import DOJO_DEFENSES, build_dojo_pipeline
 from .trace import (
     CapturingPipeline,
@@ -39,7 +45,11 @@ __all__ = [
     "DOJO_DEFENSES",
     "DOJO_ATTACK_STRATEGIES",
     "CapturingPipeline",
-    "DojoAttackPlan",
+    "DojoCoevolutionReport",
+    "DojoCoevolutionRunner",
+    "DojoHarnessOptimizer",
+    "DojoHarnessUpdate",
+    "DojoHarnessUpdateRecord",
     "DojoCaseResult",
     "DojoEvaluationReport",
     "DojoDynamicAttackGenerator",
@@ -57,6 +67,7 @@ __all__ = [
     "evaluate_fixed_defense",
     "load_suite",
     "select_task_ids",
+    "should_update_harness",
     "trace_from_messages",
     "DojoToolCallTrace",
 ]
