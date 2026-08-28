@@ -7,7 +7,7 @@
 
 当前是双线并行：
 
-- **邮件沙箱协商博弈**：协议已跑通，Critic 版本完成一轮完整实验，待修复攻击生成 fallback 后做多 seed 复验。
+- **邮件沙箱协商博弈**：run2/run3/run4 三次复验已完成（fallback=0）；run4 heldout ASR 0.333（n=3）。
 - **AgentDojo workspace**：Phase A–E 首版已完成；co-evolution train 资格率 5/9，heldout 0/4（冻结 harness）。
 
 ## 2. 项目目标
@@ -66,7 +66,17 @@
 - 不能声称得到通用 IPI 防御（harness 仍含发票等领域特定规则）。
 - 不能把 Train ASR 0.5→0.2 全归因于防御变强（仍有 9 次 fallback）。
 
-### 3.4 下一步
+### 3.4 三次复验结果（run2 / run3 / run4，攻击生成修复后）
+
+| Run | train_all ASR / Utility (n) | heldout ASR / Utility (n) | 最终回放 ASR / Utility (n) | fallbacks |
+|---|---:|---:|---:|---:|
+| run2 | 0.333 / 0.889 (9) | 0.000 / 1.000 (1) | 0.111 / 0.889 (9) | 0 |
+| run3 | 0.273 / 0.909 (11) | 0.000 / 1.000 (4) | 0.000 / 1.000 (11) | 0 |
+| run4 | 0.250 / 0.833 (12) | 0.333 / 0.667 (3) | 0.083 / 1.000 (12) | 0 |
+
+**解读：** 攻击生成 fallback 已稳定为 0。最终 harness 回放 ASR 三次均 ≤0.111，防御共演化信号一致。heldout n 仍小（1–4），run4 的 heldout ASR 0.333 不能单独作为泛化结论。
+
+### 3.5 下一步
 
 1. 修复结构化攻击生成（锁定 success condition；注入必须保留的 benign facts）。
 2. 修复后至少重复 3 次，比较 Train ASR、held-out 入场率、最终回放。
@@ -203,7 +213,7 @@ python scripts/run_agentdojo_dynamic.py \
 
 ## 6. 当前优先级
 
-1. **并行**：邮件线 run4 复验（后台运行中）
+1. **并行**：邮件线 run4 已完成（见 §3.4）
 2. **修复**：`tool_filter` 下 DeepSeek `reasoning_content` 400 错误，重跑 tool_filter 基线
 3. **扩展 Phase E**：多 seed 重复、heldout 资格率 ablation、可选 rule negotiation
 4. **再往后**：扩大 split、Hall of Fame、多模型对比
