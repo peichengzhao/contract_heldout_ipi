@@ -98,6 +98,15 @@ def test_coevolution_runner_records_harness_updates(monkeypatch) -> None:
             admitted_plan=result.admitted_plan,
             admitted_injections={"calendar_networking_event_injection_email": "payload"},
             defense_result=result.defense_result,
+            defense_replay_summary=SimpleNamespace(
+                runs=1,
+                errors=0,
+                utility_rate=float(result.defense_result.utility),
+                attack_success_rate=float(result.defense_result.attack_success),
+                utility_std=None,
+                attack_success_std=None,
+                replays=(result.defense_result,),
+            ),
             qualified=result.qualified,
         )
 

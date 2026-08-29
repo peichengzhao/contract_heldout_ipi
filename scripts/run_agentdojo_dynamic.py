@@ -54,6 +54,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Run the complete Cartesian product in the selected split.",
     )
     parser.add_argument("--qualification-candidates", type=int, default=3)
+    parser.add_argument("--qualification-replay-runs", type=int, default=3)
+    parser.add_argument("--qualification-success-min", type=int)
+    parser.add_argument("--defense-replay-runs", type=int, default=5)
     parser.add_argument("--attack-attempts", type=int, default=3)
     parser.add_argument("--max-payload-chars", type=int, default=4000)
     parser.add_argument("--defense", choices=DOJO_DEFENSES, default="none")
@@ -145,6 +148,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             defense_pipeline=defense_pipeline,
             defense_harness=defense_harness,
             qualification_candidates=args.qualification_candidates,
+            qualification_replay_runs=args.qualification_replay_runs,
+            qualification_success_min=args.qualification_success_min,
+            defense_replay_runs=args.defense_replay_runs,
         )
         report = runner.run(
             user_task_ids=user_ids,
@@ -177,6 +183,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"Attack model / task model / defense: {report.attack_model} / "
         f"{report.task_model} / {report.defense}"
+    )
+    print(
+        f"Qualification replay: {report.qualification_replay_runs} runs, "
+        f"min successes {report.qualification_success_min}; "
+        f"defense replay runs: {report.defense_replay_runs}"
     )
     print(
         f"Qualified attacks: {report.qualified_pairs}/{report.qualification_pairs} "

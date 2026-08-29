@@ -100,12 +100,15 @@ def audit_dynamic(name: str, payload: dict[str, Any]) -> dict[str, Any]:
             qual_defense_mismatches += 1
         if not qual_any:
             qual_without_success += 1
+        replay = pair.get("defense_replay_summary") or {}
         admitted_rows.append(
             {
                 "user_task_id": pair["user_task_id"],
                 "injection_task_id": pair["injection_task_id"],
                 "qual_any_success": qual_any,
                 "defense_attack_success": defense_asr,
+                "defense_replay_asr": replay.get("attack_success_rate"),
+                "defense_replay_runs": replay.get("runs"),
                 "defense_utility": defense.get("utility"),
                 "mismatch": qual_any
                 and defense_asr is not None
@@ -125,6 +128,10 @@ def audit_dynamic(name: str, payload: dict[str, Any]) -> dict[str, Any]:
         "qualification_pairs": dynamic.get("qualification_pairs"),
         "qualified_pairs": dynamic.get("qualified_pairs"),
         "qualification_rate": dynamic.get("qualification_rate"),
+        "qualification_replay_runs": dynamic.get("qualification_replay_runs"),
+        "qualification_success_min": dynamic.get("qualification_success_min"),
+        "defense_replay_runs": dynamic.get("defense_replay_runs"),
+        "schema_version": dynamic.get("schema_version"),
         "clean_utility": clean.get("utility"),
         "clean_n": clean.get("n"),
         "clean_errors": clean.get("errors"),

@@ -14,6 +14,7 @@ from .dynamic_runner import (
     DojoMetrics,
     DojoNativeResult,
     DojoQualificationRunner,
+    _admitted_metrics,
     _native_metrics,
 )
 from .optimizer import DojoHarnessOptimizer, should_update_harness
@@ -62,6 +63,9 @@ class DojoCoevolutionRunner:
         initial_harness: DefenseHarness,
         optimizer: DojoHarnessOptimizer | None = None,
         qualification_candidates: int = 3,
+        qualification_replay_runs: int = 3,
+        qualification_success_min: int | None = None,
+        defense_replay_runs: int = 5,
         injection_vector_resolver: Callable[[Any], Sequence[str]] | None = None,
     ):
         self.suite = suite
@@ -71,6 +75,9 @@ class DojoCoevolutionRunner:
         self.initial_harness = initial_harness
         self.optimizer = optimizer
         self.qualification_candidates = qualification_candidates
+        self.qualification_replay_runs = qualification_replay_runs
+        self.qualification_success_min = qualification_success_min
+        self.defense_replay_runs = defense_replay_runs
         self.injection_vector_resolver = injection_vector_resolver
 
     def run(
@@ -113,6 +120,9 @@ class DojoCoevolutionRunner:
             defense_pipeline=defense_pipeline,
             defense_harness=defense_harness,
             qualification_candidates=self.qualification_candidates,
+            qualification_replay_runs=self.qualification_replay_runs,
+            qualification_success_min=self.qualification_success_min,
+            defense_replay_runs=self.defense_replay_runs,
             injection_vector_resolver=self.injection_vector_resolver,
         )
 
@@ -173,13 +183,8 @@ class DojoCoevolutionRunner:
 
         pair_results = tuple(pair_results)
         qualified = sum(result.qualified for result in pair_results)
-        formal_results = [
-            result.defense_result
-            for result in pair_results
-            if result.defense_result is not None
-        ]
         dynamic = DojoDynamicReport(
-            schema_version=1,
+            schema_version=2,
             created_at=datetime.now(timezone.utc).isoformat(),
             agentdojo_version=version("agentdojo"),
             benchmark_version=benchmark_version,
@@ -192,13 +197,16 @@ class DojoCoevolutionRunner:
             selected_user_tasks=active_users,
             selected_injection_tasks=active_injections,
             qualification_candidates=self.qualification_candidates,
+            qualification_replay_runs=self.qualification_replay_runs,
+            qualification_success_min=runner.qualification_success_min,
+            defense_replay_runs=self.defense_replay_runs,
             qualification_rate=(qualified / len(pair_results) if pair_results else None),
             qualification_pairs=len(pair_results),
             qualified_pairs=qualified,
             clean=_native_metrics(
                 [result for _, result in clean_results], injected=False
             ),
-            admitted=_native_metrics(formal_results, injected=True),
+            admitted=_admitted_metrics(pair_results),
             clean_results=tuple(clean_results),
             pairs=pair_results,
         )

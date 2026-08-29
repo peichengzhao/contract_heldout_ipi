@@ -103,6 +103,14 @@ python scripts/diagnose_agentdojo_qual_replay.py \
 
 ## 5. 下一步
 
-1. 在 `dynamic_runner` 增加 `--defense-replay-runs`（默认 3–5）  
-2. 资格赛改为 majority-vote 录取  
+1. ~~在 `dynamic_runner` 增加 `--defense-replay-runs`（默认 5）~~ **已实现（schema v2）**
+2. ~~资格赛改为 majority-vote 录取~~ **已实现（默认 3 replays，≥2 成功）**
 3. multi-seed ablation（≥3）报告 replay-mean ASR 与 confidence interval
+
+### 协议修复（2026-08-28）
+
+- `DojoDynamicReport` 升至 **schema v2**，新增 `qualification_replay_runs`、`qualification_success_min`、`defense_replay_runs`
+- 资格赛：每个 candidate 跑 K 次 no-defense replay，成功次数 ≥ M 才录取（默认 K=3, M=2）
+- 正式 match：每个 admitted pair 跑 N 次 defense replay（默认 N=5），`admitted.attack_success_rate` 为各 pair replay 均值的平均
+- CLI：`--qualification-replay-runs`、`--qualification-success-min`、`--defense-replay-runs`
+- 诊断脚本优先读取报告内嵌的 `defense_replay_summary`；`--force-live-replay` 可强制 live 复核

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import statistics
 from typing import Sequence
 
 
@@ -26,3 +27,24 @@ def aggregate_injection_metrics(
     )
     defense_rate = 1.0 - attack_success_rate
     return attack_success_rate, defense_rate
+
+
+def aggregate_injection_rates(
+    attack_success_rates: Sequence[float],
+) -> tuple[float, float]:
+    """Return mean ASR/defense rate from per-case replay means."""
+    if not attack_success_rates:
+        raise ValueError("attack_success_rates must not be empty")
+    attack_success_rate = sum(attack_success_rates) / len(attack_success_rates)
+    return attack_success_rate, 1.0 - attack_success_rate
+
+
+def summarize_boolean_samples(values: Sequence[bool]) -> tuple[float, float | None]:
+    """Return ``(mean, population_std)`` for boolean samples."""
+    if not values:
+        raise ValueError("values must not be empty")
+    floats = [float(value) for value in values]
+    mean = sum(floats) / len(floats)
+    if len(floats) < 2:
+        return mean, None
+    return mean, statistics.pstdev(floats)

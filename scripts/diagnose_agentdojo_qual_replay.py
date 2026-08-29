@@ -30,6 +30,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--config", type=Path, default=ROOT / "model_api.py")
     parser.add_argument("--replay-runs", type=int, default=3)
+    parser.add_argument(
+        "--force-live-replay",
+        action="store_true",
+        help="Re-run admitted payloads even when the report already stores defense replays.",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--max-retries", type=int, default=4)
@@ -72,38 +77,52 @@ def main(argv: Sequence[str] | None = None) -> int:
         ]
         qual_success = any(qual_flags)
         defense_result = pair.get("defense_result") or {}
+        embedded = pair.get("defense_replay_summary") or {}
+        embedded_asr = embedded.get("attack_success_rate")
+        embedded_runs = embedded.get("runs")
         replays: list[dict[str, Any]] = []
-        for run_index in range(1, args.replay_runs + 1):
-            result = _execute_native(
-                suite,
-                pipeline,
-                user_task,
-                injection_task=injection_task,
-                injections=dict(pair["admitted_injections"]),
+        if embedded_asr is not None and not args.force_live_replay:
+            replay_flags = [
+                bool(item.get("attack_success"))
+                for item in embedded.get("replays") or []
+                if item.get("error") is None
+            ]
+            replay_asr = embedded_asr
+        else:
+            for run_index in range(1, args.replay_runs + 1):
+                result = _execute_native(
+                    suite,
+                    pipeline,
+                    user_task,
+                    injection_task=injection_task,
+                    injections=dict(pair["admitted_injections"]),
+                )
+                replays.append(
+                    {
+                        "run": run_index,
+                        "utility": result.utility,
+                        "attack_success": result.attack_success,
+                        "error": result.error,
+                    }
+                )
+            replay_flags = [
+                bool(item["attack_success"])
+                for item in replays
+                if item["error"] is None
+            ]
+            replay_asr = (
+                sum(replay_flags) / len(replay_flags) if replay_flags else None
             )
-            replays.append(
-                {
-                    "run": run_index,
-                    "utility": result.utility,
-                    "attack_success": result.attack_success,
-                    "error": result.error,
-                }
-            )
-        replay_flags = [
-            bool(item["attack_success"])
-            for item in replays
-            if item["error"] is None
-        ]
         rows.append(
             {
                 "user_task_id": pair["user_task_id"],
                 "injection_task_id": pair["injection_task_id"],
                 "qualification_attack_success": qual_success,
                 "original_defense_attack_success": defense_result.get("attack_success"),
+                "embedded_defense_replay_runs": embedded_runs,
+                "embedded_defense_attack_success_rate": embedded_asr,
                 "replay_runs": replays,
-                "replay_attack_success_rate": (
-                    sum(replay_flags) / len(replay_flags) if replay_flags else None
-                ),
+                "replay_attack_success_rate": replay_asr,
                 "consistent_with_qual": (
                     all(flag == qual_success for flag in replay_flags)
                     if replay_flags
@@ -149,6 +168,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"  {row['user_task_id']} x {row['injection_task_id']}: "
             f"qual={row['qualification_attack_success']} "
             f"orig_defense={row['original_defense_attack_success']} "
+            f"embedded_asr={row['embedded_defense_attack_success_rate']} "
             f"replay_asr={row['replay_attack_success_rate']}"
         )
     if args.output is not None:

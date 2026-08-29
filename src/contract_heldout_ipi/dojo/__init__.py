@@ -30,6 +30,7 @@ from .dynamic_runner import (
     DojoNativeResult,
     DojoQualificationAttempt,
     DojoQualificationRunner,
+    DojoReplaySummary,
 )
 from .optimizer import DojoHarnessOptimizer, DojoHarnessUpdate, should_update_harness
 from .pipeline import DOJO_DEFENSES, build_dojo_pipeline
@@ -61,6 +62,7 @@ __all__ = [
     "DojoNativeResult",
     "DojoQualificationAttempt",
     "DojoQualificationRunner",
+    "DojoReplaySummary",
     "DojoTask",
     "build_dojo_pipeline",
     "build_manifest",

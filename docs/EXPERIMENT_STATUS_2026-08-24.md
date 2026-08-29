@@ -244,8 +244,8 @@ python scripts/run_agentdojo_dynamic.py \
 
 ## 6. 当前优先级
 
-1. **扩展 ablation**：完成 train ablation，对比 heterogeneous attack model
-2. **修复 qual/replay 漂移**：多次 replay 取均值，或固定 seed
+1. **扩展 ablation**：用 schema v2 协议重跑 train/heldout，对比 heterogeneous attack model
+2. ~~**修复 qual/replay 漂移**~~ **已修复**：qual majority-vote + defense multi-replay mean ASR（见 `DIAGNOSIS_AGENTDOJO_2026-08-28.md`）
 3. **调查 tool_filter Utility=0**：是否过度删工具
 4. **再往后**：Phase E + 强攻击模型、扩大 split
 

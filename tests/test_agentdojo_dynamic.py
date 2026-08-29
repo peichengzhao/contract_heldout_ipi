@@ -161,6 +161,9 @@ def test_runner_feeds_failure_to_next_candidate_and_admits_only_success() -> Non
         defense_pipeline=SimpleNamespace(name="defense"),
         defense_harness="defense prompt",
         qualification_candidates=3,
+        qualification_replay_runs=1,
+        qualification_success_min=1,
+        defense_replay_runs=1,
         injection_vector_resolver=lambda _: ["vector_1"],
     )
 
@@ -185,7 +188,45 @@ def test_runner_feeds_failure_to_next_candidate_and_admits_only_success() -> Non
     assert generator.calls[1]["prior_attempts"][0]["attack_success"] is False
     assert pair.defense_result.attack_success is False
     assert report.admitted.attack_success_rate == 0.0
+    assert pair.defense_replay_summary is not None
+    assert pair.defense_replay_summary.attack_success_rate == 0.0
     assert report.clean.utility == 1.0
+
+
+def test_majority_qualification_requires_multiple_successes() -> None:
+    generator = SequenceGenerator()
+    runner = DojoQualificationRunner(
+        suite=FakeSuite(),
+        generator=generator,
+        qualification_pipeline=SimpleNamespace(name="qualification"),
+        defense_pipeline=SimpleNamespace(name="defense"),
+        defense_harness="defense prompt",
+        qualification_candidates=3,
+        qualification_replay_runs=3,
+        qualification_success_min=2,
+        defense_replay_runs=1,
+        injection_vector_resolver=lambda _: ["vector_1"],
+    )
+
+    report = runner.run(
+        user_task_ids=["user_task_0"],
+        injection_task_ids=["injection_task_0"],
+        benchmark_version="v1.2.2",
+        suite_name="workspace",
+        split="train",
+        attack_model="attacker",
+        task_model="task-agent",
+        defense_name="defense",
+    )
+
+    pair = report.pairs[0]
+    assert report.qualified_pairs == 1
+    assert len(pair.qualification_attempts[0].qualification_replays) == 3
+    assert all(
+        attempt.result.attack_success is False
+        for attempt in pair.qualification_attempts[:1]
+    )
+    assert pair.qualification_attempts[1].result.attack_success is True
 
 
 def test_minimal_split_has_disjoint_train_and_heldout_ids() -> None:

@@ -52,6 +52,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-pairs", type=int, default=1)
     parser.add_argument("--all-pairs", action="store_true")
     parser.add_argument("--qualification-candidates", type=int, default=3)
+    parser.add_argument("--qualification-replay-runs", type=int, default=3)
+    parser.add_argument("--qualification-success-min", type=int)
+    parser.add_argument("--defense-replay-runs", type=int, default=5)
     parser.add_argument("--attack-attempts", type=int, default=3)
     parser.add_argument("--optimizer-attempts", type=int, default=3)
     parser.add_argument("--max-payload-chars", type=int, default=4000)
@@ -184,6 +187,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else None
             ),
             qualification_candidates=args.qualification_candidates,
+            qualification_replay_runs=args.qualification_replay_runs,
+            qualification_success_min=args.qualification_success_min,
+            defense_replay_runs=args.defense_replay_runs,
         )
         report = runner.run(
             user_task_ids=user_ids,
@@ -225,6 +231,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"(optimize={'on' if report.optimize_enabled else 'off'})"
     )
     print(f"Harness updates: {len(report.harness_updates)}")
+    print(
+        f"Qualification replay: {dynamic.qualification_replay_runs} runs, "
+        f"min successes {dynamic.qualification_success_min}; "
+        f"defense replay runs: {dynamic.defense_replay_runs}"
+    )
     print(
         f"Qualified attacks: {dynamic.qualified_pairs}/{dynamic.qualification_pairs} "
         f"({_rate(dynamic.qualification_rate)})"
