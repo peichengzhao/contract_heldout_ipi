@@ -310,3 +310,5 @@ Three-model evaluation MVP: fixed-harness baselines, adaptive optimization, and
 a structured negotiated co-evolution protocol with constitutional validation,
 rule locking, historical attack replays, hybrid LLM/deterministic judging, and
 train-to-held-out transfer-gap reporting.
+
+**Agent handoff:** see [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md) for current progress, experiment results, and continuation tasks.
