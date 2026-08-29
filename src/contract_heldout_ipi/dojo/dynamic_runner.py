@@ -111,6 +111,7 @@ class DojoQualificationRunner:
         qualification_success_min: int | None = None,
         defense_replay_runs: int = 5,
         injection_vector_resolver: Callable[[Any], Sequence[str]] | None = None,
+        attack_memory: list[dict[str, Any]] | None = None,
     ):
         if qualification_candidates < 1:
             raise ValueError("qualification_candidates must be at least 1")
@@ -138,6 +139,7 @@ class DojoQualificationRunner:
         self.qualification_success_min = success_min
         self.defense_replay_runs = defense_replay_runs
         self._resolver = injection_vector_resolver
+        self._attack_memory = attack_memory if attack_memory is not None else []
         self._discovery_attack: Any | None = None
 
     def run(
@@ -241,7 +243,7 @@ class DojoQualificationRunner:
                     injectable_vectors=vectors,
                     tools=self.suite.tools,
                     defense_harness=self.defense_harness,
-                    prior_attempts=tuple(history),
+                    prior_attempts=tuple(self._attack_memory) + tuple(history),
                     used_strategies=set(used_strategies),
                 )
             except (ModelClientError, ValueError) as exc:

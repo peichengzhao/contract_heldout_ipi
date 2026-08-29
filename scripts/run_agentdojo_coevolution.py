@@ -55,6 +55,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--qualification-replay-runs", type=int, default=3)
     parser.add_argument("--qualification-success-min", type=int)
     parser.add_argument("--defense-replay-runs", type=int, default=5)
+    parser.add_argument("--train-rounds", type=int, default=1)
+    parser.add_argument("--max-archive-size", type=int, default=20)
+    parser.add_argument("--attack-memory-limit", type=int, default=10)
     parser.add_argument("--attack-attempts", type=int, default=3)
     parser.add_argument("--optimizer-attempts", type=int, default=3)
     parser.add_argument("--max-payload-chars", type=int, default=4000)
@@ -190,6 +193,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             qualification_replay_runs=args.qualification_replay_runs,
             qualification_success_min=args.qualification_success_min,
             defense_replay_runs=args.defense_replay_runs,
+            train_rounds=args.train_rounds,
+            max_archive_size=args.max_archive_size,
+            attack_memory_limit=args.attack_memory_limit,
         )
         report = runner.run(
             user_task_ids=user_ids,
@@ -224,6 +230,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"Attack model / task model / defense: {dynamic.attack_model} / "
         f"{dynamic.task_model} / {dynamic.defense}"
+    )
+    print(
+        f"Train rounds: {report.train_rounds} | archive size: {len(report.archive)} | "
+        f"league replays: {len(report.league_replays)}"
+    )
+    print(
+        f"Final league replay ASR / Utility / Security: "
+        f"{_rate(report.final_league_replay.attack_success_rate)} / "
+        f"{_rate(report.final_league_replay.utility)} / "
+        f"{_rate(report.final_league_replay.security_rate)} "
+        f"(n={report.final_league_replay.n}, errors={report.final_league_replay.errors})"
     )
     print(
         f"Harness versions: {report.initial_harness_version} -> "

@@ -15,9 +15,12 @@ from .evaluator import (
     evaluate_fixed_defense,
 )
 from .coevolution_runner import (
+    DojoArchivedAttack,
     DojoCoevolutionReport,
     DojoCoevolutionRunner,
     DojoHarnessUpdateRecord,
+    DojoLeagueReplayResult,
+    DojoRoundSummary,
 )
 from .dynamic_attack import (
     DOJO_ATTACK_STRATEGIES,
@@ -46,11 +49,14 @@ __all__ = [
     "DOJO_DEFENSES",
     "DOJO_ATTACK_STRATEGIES",
     "CapturingPipeline",
+    "DojoArchivedAttack",
     "DojoCoevolutionReport",
     "DojoCoevolutionRunner",
     "DojoHarnessOptimizer",
     "DojoHarnessUpdate",
     "DojoHarnessUpdateRecord",
+    "DojoLeagueReplayResult",
+    "DojoRoundSummary",
     "DojoCaseResult",
     "DojoEvaluationReport",
     "DojoDynamicAttackGenerator",

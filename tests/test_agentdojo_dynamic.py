@@ -165,6 +165,13 @@ def test_runner_feeds_failure_to_next_candidate_and_admits_only_success() -> Non
         qualification_success_min=1,
         defense_replay_runs=1,
         injection_vector_resolver=lambda _: ["vector_1"],
+        attack_memory=[
+            {
+                "user_task_id": "other",
+                "strategy": "workflow_continuity",
+                "attack_success": False,
+            }
+        ],
     )
 
     report = runner.run(
@@ -184,7 +191,7 @@ def test_runner_feeds_failure_to_next_candidate_and_admits_only_success() -> Non
     assert len(pair.qualification_attempts) == 2
     assert pair.qualification_attempts[0].result.attack_success is False
     assert pair.qualification_attempts[1].result.attack_success is True
-    assert generator.calls[0]["prior_attempts"] == ()
+    assert generator.calls[0]["prior_attempts"][0]["strategy"] == "workflow_continuity"
     assert generator.calls[1]["prior_attempts"][0]["attack_success"] is False
     assert pair.defense_result.attack_success is False
     assert report.admitted.attack_success_rate == 0.0
