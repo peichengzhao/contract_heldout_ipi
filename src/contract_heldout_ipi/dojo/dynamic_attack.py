@@ -62,6 +62,12 @@ class DojoDynamicAttackGenerator:
         self.client = client
         self.max_attempts = max_attempts
         self.max_payload_chars = max_payload_chars
+        self.system_prompt = DOJO_ATTACK_SYSTEM_PROMPT
+
+    def set_system_prompt(self, prompt: str) -> None:
+        if not prompt.strip():
+            raise ValueError("system_prompt must be non-empty")
+        self.system_prompt = prompt.strip()
 
     def generate(
         self,
@@ -105,7 +111,7 @@ class DojoDynamicAttackGenerator:
             try:
                 response = self.client.complete(
                     messages=[
-                        {"role": "system", "content": DOJO_ATTACK_SYSTEM_PROMPT},
+                        {"role": "system", "content": self.system_prompt},
                         {
                             "role": "user",
                             "content": json.dumps(request, ensure_ascii=False),

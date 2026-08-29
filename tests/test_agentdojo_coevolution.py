@@ -45,13 +45,26 @@ def test_should_not_update_harness_when_defense_holds() -> None:
     assert should_update_harness(result) is False
 
 
-class FakeOptimizer:
+class FakeDefenseOptimizer:
     def optimize(self, **kwargs) -> DojoHarnessUpdate:
         harness = kwargs["harness"]
         return DojoHarnessUpdate(
             harness=harness.revised(harness.prompt + "\nExtra guard."),
             rationale="tighten injection resistance",
             trigger="attack_success",
+        )
+
+
+class FakeAttackOptimizer:
+    def optimize(self, **kwargs):
+        from contract_heldout_ipi.defenses.harness import AttackHarness
+        from contract_heldout_ipi.dojo.attack_optimizer import DojoAttackUpdate
+
+        harness = kwargs["harness"]
+        return DojoAttackUpdate(
+            harness=harness.revised(harness.prompt + "\nStronger attacks."),
+            rationale="evade defense",
+            trigger="defense_blocked",
         )
 
 
@@ -137,7 +150,8 @@ def test_coevolution_runner_records_harness_updates(monkeypatch) -> None:
         qualification_pipeline=object(),
         pipeline_factory=lambda prompt: (object(), f"harness:{prompt}"),
         initial_harness=DefenseHarness(name="none", prompt="base prompt", version=0),
-        optimizer=FakeOptimizer(),
+        optimizer=FakeDefenseOptimizer(),
+        attack_optimizer=FakeAttackOptimizer(),
         qualification_candidates=1,
     )
     report = runner.run(
@@ -153,13 +167,17 @@ def test_coevolution_runner_records_harness_updates(monkeypatch) -> None:
         run_clean=False,
         optimize=True,
     )
-    assert report.schema_version == 2
+    assert report.schema_version == 3
     assert report.final_harness_version == 1
+    assert report.final_attack_harness_version == 1
     assert len(report.harness_updates) == 1
+    assert len(report.attack_updates) == 1
     assert report.harness_updates[0].trigger == "attack_success"
     assert report.harness_updates[0].round_index == 0
     assert len(report.archive) == 2
-    assert len(report.round_summaries) == 1
+    assert len(report.optimization_trajectory) == 1
+    assert report.optimization_trajectory[0].defense_updates_in_round == 1
+    assert report.optimization_trajectory[0].attack_updates_in_round == 1
 
 
 def test_coevolution_runner_replays_archive_after_harness_update(monkeypatch) -> None:
@@ -218,7 +236,8 @@ def test_coevolution_runner_replays_archive_after_harness_update(monkeypatch) ->
         qualification_pipeline=object(),
         pipeline_factory=lambda prompt: (object(), prompt),
         initial_harness=DefenseHarness(name="none", prompt="base", version=0),
-        optimizer=FakeOptimizer(),
+        optimizer=FakeDefenseOptimizer(),
+        attack_optimizer=FakeAttackOptimizer(),
         qualification_candidates=1,
         train_rounds=1,
     )
@@ -234,7 +253,7 @@ def test_coevolution_runner_replays_archive_after_harness_update(monkeypatch) ->
         run_clean=False,
         optimize=True,
     )
-    assert replay_calls == [1, 1]
+    assert replay_calls == [1, 1, 1]
 
 
 def test_train_rounds_rerun_pairs_and_accumulate_archive(monkeypatch) -> None:

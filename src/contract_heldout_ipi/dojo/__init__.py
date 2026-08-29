@@ -14,13 +14,21 @@ from .evaluator import (
     DojoMetrics,
     evaluate_fixed_defense,
 )
+from .attack_optimizer import (
+    DojoAttackOptimizer,
+    DojoAttackUpdate,
+    should_update_attack,
+)
 from .coevolution_runner import (
     DojoArchivedAttack,
+    DojoAttackUpdateRecord,
     DojoCoevolutionReport,
     DojoCoevolutionRunner,
     DojoHarnessUpdateRecord,
     DojoLeagueReplayResult,
+    DojoOptimizationSnapshot,
     DojoRoundSummary,
+    format_optimization_trajectory,
 )
 from .dynamic_attack import (
     DOJO_ATTACK_STRATEGIES,
@@ -49,6 +57,9 @@ __all__ = [
     "DOJO_DEFENSES",
     "DOJO_ATTACK_STRATEGIES",
     "CapturingPipeline",
+    "DojoAttackOptimizer",
+    "DojoAttackUpdate",
+    "DojoAttackUpdateRecord",
     "DojoArchivedAttack",
     "DojoCoevolutionReport",
     "DojoCoevolutionRunner",
@@ -56,7 +67,10 @@ __all__ = [
     "DojoHarnessUpdate",
     "DojoHarnessUpdateRecord",
     "DojoLeagueReplayResult",
+    "DojoOptimizationSnapshot",
     "DojoRoundSummary",
+    "format_optimization_trajectory",
+    "should_update_attack",
     "DojoCaseResult",
     "DojoEvaluationReport",
     "DojoDynamicAttackGenerator",

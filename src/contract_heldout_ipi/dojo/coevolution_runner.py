@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from importlib.metadata import version
 from typing import Any, Callable, Sequence
 
-from contract_heldout_ipi.defenses.harness import DefenseHarness
+from contract_heldout_ipi.defenses.harness import AttackHarness, DefenseHarness
 
+from .attack_optimizer import DojoAttackOptimizer, should_update_attack
+from .dynamic_attack import DOJO_ATTACK_SYSTEM_PROMPT
 from .dynamic_runner import (
     DojoDynamicReport,
     DojoDynamicPairResult,
@@ -39,6 +41,17 @@ class DojoHarnessUpdateRecord:
 
 
 @dataclass(frozen=True)
+class DojoAttackUpdateRecord:
+    user_task_id: str
+    injection_task_id: str
+    from_version: int
+    to_version: int
+    rationale: str
+    trigger: str
+    round_index: int
+
+
+@dataclass(frozen=True)
 class DojoArchivedAttack:
     user_task_id: str
     injection_task_id: str
@@ -47,6 +60,7 @@ class DojoArchivedAttack:
     target_vectors: tuple[str, ...]
     admitted_injections: dict[str, str]
     round_index: int
+    attack_harness_version: int
 
 
 @dataclass(frozen=True)
@@ -57,6 +71,25 @@ class DojoLeagueReplayResult:
     harness_version: int
     defense_result: DojoNativeResult
     defense_replay_summary: DojoReplaySummary
+
+
+@dataclass(frozen=True)
+class DojoOptimizationSnapshot:
+    """Per-round attack/defense state and outcomes for trajectory analysis."""
+
+    round_index: int
+    defense_harness_version: int
+    attack_harness_version: int
+    qualification_pairs: int
+    qualified_pairs: int
+    qualification_rate: float | None
+    round_admitted_attack_success_rate: float | None
+    round_admitted_n: int
+    league_replay_attack_success_rate: float | None
+    league_replay_n: int
+    archive_size: int
+    defense_updates_in_round: int
+    attack_updates_in_round: int
 
 
 @dataclass(frozen=True)
@@ -79,10 +112,15 @@ class DojoCoevolutionReport:
     initial_harness_version: int
     final_harness_version: int
     final_system_prompt: str
+    initial_attack_harness_version: int
+    final_attack_harness_version: int
+    final_attack_prompt: str
     harness_updates: tuple[DojoHarnessUpdateRecord, ...]
+    attack_updates: tuple[DojoAttackUpdateRecord, ...]
     archive: tuple[DojoArchivedAttack, ...]
     league_replays: tuple[DojoLeagueReplayResult, ...]
     final_league_replay: DojoMetrics
+    optimization_trajectory: tuple[DojoOptimizationSnapshot, ...]
     round_summaries: tuple[DojoRoundSummary, ...]
     dynamic: DojoDynamicReport
 
@@ -96,7 +134,7 @@ PipelineFactory = Callable[[str | None], tuple[Any, str]]
 
 
 class DojoCoevolutionRunner:
-    """Run multi-round dynamic attacks with defense harness and attack-archive co-evolution."""
+    """Run multi-round dynamic attacks with defense and attack prompt co-evolution."""
 
     def __init__(
         self,
@@ -106,7 +144,9 @@ class DojoCoevolutionRunner:
         qualification_pipeline: Any,
         pipeline_factory: PipelineFactory,
         initial_harness: DefenseHarness,
+        initial_attack_harness: AttackHarness | None = None,
         optimizer: DojoHarnessOptimizer | None = None,
+        attack_optimizer: DojoAttackOptimizer | None = None,
         qualification_candidates: int = 3,
         qualification_replay_runs: int = 3,
         qualification_success_min: int | None = None,
@@ -127,7 +167,13 @@ class DojoCoevolutionRunner:
         self.qualification_pipeline = qualification_pipeline
         self.pipeline_factory = pipeline_factory
         self.initial_harness = initial_harness
+        self.initial_attack_harness = initial_attack_harness or AttackHarness(
+            name="attack-generator",
+            prompt=DOJO_ATTACK_SYSTEM_PROMPT,
+            version=0,
+        )
         self.optimizer = optimizer
+        self.attack_optimizer = attack_optimizer
         self.qualification_candidates = qualification_candidates
         self.qualification_replay_runs = qualification_replay_runs
         self.qualification_success_min = qualification_success_min
@@ -169,6 +215,10 @@ class DojoCoevolutionRunner:
         )
 
         harness = self.initial_harness
+        attack_harness = self.initial_attack_harness
+        if hasattr(self.generator, "set_system_prompt"):
+            self.generator.set_system_prompt(attack_harness.prompt)
+
         defense_pipeline, defense_harness = self.pipeline_factory(harness.prompt)
         attack_memory: list[dict[str, Any]] = []
         runner = DojoQualificationRunner(
@@ -198,14 +248,18 @@ class DojoCoevolutionRunner:
                     )
                 )
 
-        updates: list[DojoHarnessUpdateRecord] = []
+        defense_updates: list[DojoHarnessUpdateRecord] = []
+        attack_updates: list[DojoAttackUpdateRecord] = []
         archive: list[DojoArchivedAttack] = []
         league_replays: list[DojoLeagueReplayResult] = []
         round_summaries: list[DojoRoundSummary] = []
+        optimization_trajectory: list[DojoOptimizationSnapshot] = []
         last_pair_results: tuple[DojoDynamicPairResult, ...] = ()
 
         for round_index in range(self.train_rounds):
             round_pairs: list[DojoDynamicPairResult] = []
+            defense_updates_in_round = 0
+            attack_updates_in_round = 0
             for user_id, injection_id in pairs:
                 pair_result = runner._run_pair(user_id, injection_id)
                 round_pairs.append(pair_result)
@@ -216,7 +270,8 @@ class DojoCoevolutionRunner:
                     limit=self.attack_memory_limit,
                 )
                 defense_result = pair_result.defense_result
-                if pair_result.admitted_plan is not None and pair_result.admitted_injections is not None:
+                admitted = pair_result.admitted_plan is not None
+                if admitted and pair_result.admitted_injections is not None:
                     archive.append(
                         DojoArchivedAttack(
                             user_task_id=user_id,
@@ -226,9 +281,11 @@ class DojoCoevolutionRunner:
                             target_vectors=pair_result.admitted_plan.target_vectors,
                             admitted_injections=dict(pair_result.admitted_injections),
                             round_index=round_index,
+                            attack_harness_version=attack_harness.version,
                         )
                     )
                     archive[:] = archive[-self.max_archive_size :]
+
                 if (
                     optimize
                     and self.optimizer is not None
@@ -248,7 +305,7 @@ class DojoCoevolutionRunner:
                         injection_task_id=injection_id,
                     )
                     if update.harness.version != harness.version:
-                        updates.append(
+                        defense_updates.append(
                             DojoHarnessUpdateRecord(
                                 user_task_id=user_id,
                                 injection_task_id=injection_id,
@@ -259,23 +316,91 @@ class DojoCoevolutionRunner:
                                 round_index=round_index,
                             )
                         )
+                        defense_updates_in_round += 1
                         harness = update.harness
                         defense_pipeline, defense_harness = self.pipeline_factory(
                             harness.prompt
                         )
                         runner.defense_pipeline = defense_pipeline
                         runner.defense_harness = defense_harness
-                        league_replays.extend(
-                            _replay_archive(
-                                self.suite,
-                                archive,
-                                defense_pipeline,
-                                defense_replay_runs=self.defense_replay_runs,
-                                harness_version=harness.version,
+                        batch = _replay_archive(
+                            self.suite,
+                            archive,
+                            defense_pipeline,
+                            defense_replay_runs=self.defense_replay_runs,
+                            harness_version=harness.version,
+                        )
+                        league_replays.extend(batch)
+
+                if (
+                    optimize
+                    and self.attack_optimizer is not None
+                    and pair_result.admitted_plan is not None
+                    and should_update_attack(defense_result, admitted=admitted)
+                    and defense_result is not None
+                ):
+                    user_task = self.suite.get_user_task_by_id(user_id)
+                    injection_task = self.suite.get_injection_task_by_id(injection_id)
+                    attack_update = self.attack_optimizer.optimize(
+                        harness=attack_harness,
+                        user_task_prompt=user_task.PROMPT,
+                        injection_goal=injection_task.GOAL,
+                        attack_plan=pair_result.admitted_plan,
+                        defense_harness=runner.defense_harness,
+                        result=defense_result,
+                        user_task_id=user_id,
+                        injection_task_id=injection_id,
+                    )
+                    if attack_update.harness.version != attack_harness.version:
+                        attack_updates.append(
+                            DojoAttackUpdateRecord(
+                                user_task_id=user_id,
+                                injection_task_id=injection_id,
+                                from_version=attack_harness.version,
+                                to_version=attack_update.harness.version,
+                                rationale=attack_update.rationale,
+                                trigger=attack_update.trigger,
+                                round_index=round_index,
                             )
                         )
+                        attack_updates_in_round += 1
+                        attack_harness = attack_update.harness
+                        if hasattr(self.generator, "set_system_prompt"):
+                            self.generator.set_system_prompt(attack_harness.prompt)
 
             qualified = sum(result.qualified for result in round_pairs)
+            round_admitted = _admitted_metrics(round_pairs)
+            round_league_batch = (
+                _replay_archive(
+                    self.suite,
+                    archive,
+                    runner.defense_pipeline,
+                    defense_replay_runs=self.defense_replay_runs,
+                    harness_version=harness.version,
+                )
+                if archive
+                else []
+            )
+            round_league_metrics = _league_metrics(round_league_batch)
+            optimization_trajectory.append(
+                DojoOptimizationSnapshot(
+                    round_index=round_index,
+                    defense_harness_version=harness.version,
+                    attack_harness_version=attack_harness.version,
+                    qualification_pairs=len(round_pairs),
+                    qualified_pairs=qualified,
+                    qualification_rate=(
+                        qualified / len(round_pairs) if round_pairs else None
+                    ),
+                    round_admitted_attack_success_rate=round_admitted.attack_success_rate,
+                    round_admitted_n=round_admitted.n,
+                    league_replay_attack_success_rate=round_league_metrics.attack_success_rate,
+                    league_replay_n=round_league_metrics.n,
+                    archive_size=len(archive),
+                    defense_updates_in_round=defense_updates_in_round,
+                    attack_updates_in_round=attack_updates_in_round,
+                )
+            )
             round_summaries.append(
                 DojoRoundSummary(
                     round_index=round_index,
@@ -332,18 +457,24 @@ class DojoCoevolutionRunner:
             pairs=last_pair_results,
         )
         return DojoCoevolutionReport(
-            schema_version=2,
+            schema_version=3,
             created_at=dynamic.created_at,
-            optimize_enabled=optimize and self.optimizer is not None,
+            optimize_enabled=optimize
+            and (self.optimizer is not None or self.attack_optimizer is not None),
             train_rounds=self.train_rounds,
             max_archive_size=self.max_archive_size,
             initial_harness_version=self.initial_harness.version,
             final_harness_version=harness.version,
             final_system_prompt=harness.prompt,
-            harness_updates=tuple(updates),
+            initial_attack_harness_version=self.initial_attack_harness.version,
+            final_attack_harness_version=attack_harness.version,
+            final_attack_prompt=attack_harness.prompt,
+            harness_updates=tuple(defense_updates),
+            attack_updates=tuple(attack_updates),
             archive=tuple(archive),
             league_replays=tuple(league_replays),
             final_league_replay=final_league_replay,
+            optimization_trajectory=tuple(optimization_trajectory),
             round_summaries=tuple(round_summaries),
             dynamic=dynamic,
         )
@@ -450,6 +581,54 @@ def _league_metrics(replays: Sequence[DojoLeagueReplayResult]) -> DojoMetrics:
 
     asr, defense_rate = aggregate_injection_rates(attack_rates)
     return DojoMetrics(len(summaries), errors, utility, defense_rate, asr)
+
+
+def format_optimization_trajectory(
+    snapshots: Sequence[DojoOptimizationSnapshot],
+) -> str:
+    headers = (
+        "R",
+        "DefV",
+        "AtkV",
+        "Qual",
+        "AdmASR",
+        "LgASR",
+        "Arc",
+        "D+",
+        "A+",
+    )
+    lines = [
+        " | ".join(f"{header:>6}" for header in headers),
+        "-+-".join("-" * 6 for _ in headers),
+    ]
+    for snap in snapshots:
+        qual = (
+            f"{snap.qualified_pairs}/{snap.qualification_pairs}"
+            if snap.qualification_pairs
+            else "N/A"
+        )
+        adm = _fmt_rate(snap.round_admitted_attack_success_rate)
+        league = _fmt_rate(snap.league_replay_attack_success_rate)
+        lines.append(
+            " | ".join(
+                [
+                    f"{snap.round_index:>6}",
+                    f"{snap.defense_harness_version:>6}",
+                    f"{snap.attack_harness_version:>6}",
+                    f"{qual:>6}",
+                    f"{adm:>6}",
+                    f"{league:>6}",
+                    f"{snap.archive_size:>6}",
+                    f"{snap.defense_updates_in_round:>6}",
+                    f"{snap.attack_updates_in_round:>6}",
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _fmt_rate(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.3f}"
 
 
 def _execute_native_clean(

@@ -18,3 +18,18 @@ class DefenseHarness:
 
     def revised(self, prompt: str) -> DefenseHarness:
         return DefenseHarness(name=self.name, prompt=prompt, version=self.version + 1)
+
+
+@dataclass(frozen=True)
+class AttackHarness:
+    """Versioned red-team generator system prompt."""
+
+    name: str
+    prompt: str
+    version: int = 0
+
+    def system_prompt(self) -> str:
+        return self.prompt
+
+    def revised(self, prompt: str) -> AttackHarness:
+        return AttackHarness(name=self.name, prompt=prompt, version=self.version + 1)

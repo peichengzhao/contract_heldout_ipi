@@ -25,10 +25,12 @@ from contract_heldout_ipi.defenses.harness import DefenseHarness  # noqa: E402
 from contract_heldout_ipi.dojo import (  # noqa: E402
     AgentDojoDependencyError,
     DOJO_DEFENSES,
+    DojoAttackOptimizer,
     DojoDynamicAttackGenerator,
     DojoHarnessOptimizer,
     DojoCoevolutionRunner,
     build_dojo_pipeline,
+    format_optimization_trajectory,
     load_suite,
     select_task_ids,
 )
@@ -55,9 +57,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--qualification-replay-runs", type=int, default=3)
     parser.add_argument("--qualification-success-min", type=int)
     parser.add_argument("--defense-replay-runs", type=int, default=5)
-    parser.add_argument("--train-rounds", type=int, default=1)
+    parser.add_argument("--train-rounds", type=int, default=8)
     parser.add_argument("--max-archive-size", type=int, default=20)
     parser.add_argument("--attack-memory-limit", type=int, default=10)
+    parser.add_argument("--attack-optimizer-attempts", type=int, default=3)
     parser.add_argument("--attack-attempts", type=int, default=3)
     parser.add_argument("--optimizer-attempts", type=int, default=3)
     parser.add_argument("--max-payload-chars", type=int, default=4000)
@@ -172,19 +175,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             prompt=initial_prompt or _default_system_prompt(qualification_pipeline),
             version=0,
         )
+        attack_generator = DojoDynamicAttackGenerator(
+            attack_client,
+            max_attempts=args.attack_attempts,
+            max_payload_chars=args.max_payload_chars,
+        )
         runner = DojoCoevolutionRunner(
             suite=suite,
-            generator=DojoDynamicAttackGenerator(
-                attack_client,
-                max_attempts=args.attack_attempts,
-                max_payload_chars=args.max_payload_chars,
-            ),
+            generator=attack_generator,
             qualification_pipeline=qualification_pipeline,
             pipeline_factory=pipeline_factory,
             initial_harness=initial_harness,
             optimizer=(
                 DojoHarnessOptimizer(
                     optimizer_client, max_attempts=args.optimizer_attempts
+                )
+                if optimize
+                else None
+            ),
+            attack_optimizer=(
+                DojoAttackOptimizer(
+                    optimizer_client, max_attempts=args.attack_optimizer_attempts
                 )
                 if optimize
                 else None
@@ -247,7 +258,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{report.final_harness_version} "
         f"(optimize={'on' if report.optimize_enabled else 'off'})"
     )
-    print(f"Harness updates: {len(report.harness_updates)}")
+    print(
+        f"Attack harness versions: {report.initial_attack_harness_version} -> "
+        f"{report.final_attack_harness_version}"
+    )
+    print(f"Defense harness updates: {len(report.harness_updates)}")
+    print(f"Attack harness updates: {len(report.attack_updates)}")
+    print("Optimization trajectory (R=round, DefV/AtkV=versions, LgASR=league ASR):")
+    print(format_optimization_trajectory(report.optimization_trajectory))
+    if report.attack_updates:
+        print("Attack update events:")
+        for item in report.attack_updates:
+            print(
+                f"  round {item.round_index} {item.user_task_id} x "
+                f"{item.injection_task_id}: v{item.from_version}->v{item.to_version} "
+                f"({item.trigger})"
+            )
+    if report.harness_updates:
+        print("Defense update events:")
+        for item in report.harness_updates:
+            print(
+                f"  round {item.round_index} {item.user_task_id} x "
+                f"{item.injection_task_id}: v{item.from_version}->v{item.to_version} "
+                f"({item.trigger})"
+            )
     print(
         f"Qualification replay: {dynamic.qualification_replay_runs} runs, "
         f"min successes {dynamic.qualification_success_min}; "
