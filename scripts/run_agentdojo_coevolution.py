@@ -24,14 +24,23 @@ from contract_heldout_ipi.agent import (  # noqa: E402
 from contract_heldout_ipi.defenses.harness import DefenseHarness  # noqa: E402
 from contract_heldout_ipi.dojo import (  # noqa: E402
     AgentDojoDependencyError,
+    DEFAULT_DOJO_CONSTITUTION,
     DOJO_DEFENSES,
+    DUEL_DOJO_CONSTITUTION,
     DojoAttackOptimizer,
     DojoDynamicAttackGenerator,
     DojoHarnessOptimizer,
     DojoCoevolutionRunner,
+    DojoGameNegotiator,
+    DojoPayloadOptimizer,
+    DojoTemplateOptimizer,
+    build_bootstrap_harness,
     build_dojo_pipeline,
     format_optimization_trajectory,
     load_suite,
+    resolve_attack_rules,
+    resolve_coevolution_protocol,
+    resolve_task_temperature,
     select_task_ids,
 )
 
@@ -53,7 +62,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--injection-task", action="append", default=[])
     parser.add_argument("--max-pairs", type=int, default=1)
     parser.add_argument("--all-pairs", action="store_true")
-    parser.add_argument("--qualification-candidates", type=int, default=3)
+    parser.add_argument("--qualification-candidates", type=int, default=6)
     parser.add_argument("--qualification-replay-runs", type=int, default=3)
     parser.add_argument("--qualification-success-min", type=int)
     parser.add_argument("--defense-replay-runs", type=int, default=5)
@@ -61,9 +70,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-archive-size", type=int, default=20)
     parser.add_argument("--attack-memory-limit", type=int, default=10)
     parser.add_argument("--attack-optimizer-attempts", type=int, default=3)
+    parser.add_argument("--payload-refine-candidates", type=int, default=3)
+    parser.add_argument("--same-round-attack-iters", type=int, default=2)
     parser.add_argument("--attack-attempts", type=int, default=3)
     parser.add_argument("--optimizer-attempts", type=int, default=3)
-    parser.add_argument("--max-payload-chars", type=int, default=4000)
+    parser.add_argument("--max-payload-chars", type=int, default=5000)
     parser.add_argument("--defense", choices=DOJO_DEFENSES, default="none")
     parser.add_argument("--system-message-file", type=Path)
     parser.add_argument(
@@ -78,12 +89,87 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--skip-clean", action="store_true")
     parser.add_argument("--timeout", type=float, default=180.0)
-    parser.add_argument("--max-retries", type=int, default=4)
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=8,
+        help="Minimum retry count for transient API failures (exponential backoff).",
+    )
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=2.0,
+        help="Base delay in seconds for exponential backoff (delay * 2^attempt).",
+    )
+    parser.add_argument(
+        "--retry-max-delay",
+        type=float,
+        default=120.0,
+        help="Cap on a single backoff sleep in seconds.",
+    )
+    parser.add_argument(
+        "--retry-budget-seconds",
+        type=float,
+        default=900.0,
+        help=(
+            "Wall-clock budget per model call for retryable errors (e.g. 503). "
+            "Keeps retrying with exponential backoff until the budget is exhausted "
+            "even after --max-retries. Set 0 to disable budget-based persistence."
+        ),
+    )
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--deepseek-max-tokens", type=int, default=8192)
     parser.add_argument("--attack-temperature", type=float, default=0.9)
     parser.add_argument("--task-temperature", type=float, default=0.0)
     parser.add_argument("--tool-output-format", choices=("yaml", "json"), default="yaml")
+    parser.add_argument(
+        "--strict-injectable-vectors",
+        action="store_true",
+        help=(
+            "Only allow injection into task-reachable vectors (legacy behavior). "
+            "Default expands to the full workspace injection surface (G1)."
+        ),
+    )
+    parser.add_argument(
+        "--attack-rule-profile",
+        choices=(
+            "legacy",
+            "default",
+            "attacker_advantage",
+            "arms_race_natural",
+            "duel_natural",
+        ),
+        default=None,
+        help=(
+            "Negotiated attack-side permissions for Dojo co-evolution (G4). "
+            "Default: duel_natural / arms_race_natural matching "
+            "--coevolution-protocol, else attacker_advantage."
+        ),
+    )
+    parser.add_argument(
+        "--coevolution-protocol",
+        choices=("legacy", "arms_race", "duel"),
+        default="arms_race",
+        help=(
+            "Co-evolution protocol profile. arms_race: NL payloads + incremental "
+            "defense with cooldown. duel: multi-round bidirectional evolution "
+            "(no defense cooldown; attack harness keeps upgrading)."
+        ),
+    )
+    parser.add_argument(
+        "--negotiate-each-round",
+        action="store_true",
+        help=(
+            "Before each train round, let attack/defense/judge agents negotiate "
+            "and lock DojoGameRules (large attack surface; defense only updates harness)."
+        ),
+    )
+    parser.add_argument(
+        "--negotiation-rounds",
+        type=int,
+        default=1,
+        help="Attacker/defender proposal sub-rounds inside each train-round negotiation.",
+    )
     return parser.parse_args(argv)
 
 
@@ -122,14 +208,47 @@ def main(argv: Sequence[str] | None = None) -> int:
             temperature=args.attack_temperature,
             max_tokens=attack_max_tokens,
             max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            retry_max_delay=args.retry_max_delay,
+            retry_budget_seconds=args.retry_budget_seconds,
         )
+        defense_model = config.for_role("defense").model
+        defense_max_tokens = _role_max_tokens(
+            defense_model, args.max_tokens, args.deepseek_max_tokens
+        )
+        defense_client = build_role_client(
+            config,
+            "defense",
+            timeout=args.timeout,
+            temperature=0.2,
+            max_tokens=defense_max_tokens,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            retry_max_delay=args.retry_max_delay,
+            retry_budget_seconds=args.retry_budget_seconds,
+        )
+        # Defense agent updates the task-agent harness.
         optimizer_client = build_role_client(
             config,
             "optimizer",
             timeout=args.timeout,
             temperature=0.0,
-            max_tokens=task_max_tokens,
+            max_tokens=defense_max_tokens,
             max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            retry_max_delay=args.retry_max_delay,
+            retry_budget_seconds=args.retry_budget_seconds,
+        )
+        rule_judge_client = build_role_client(
+            config,
+            "rule_judge",
+            timeout=args.timeout,
+            temperature=0.0,
+            max_tokens=args.max_tokens,
+            max_retries=args.max_retries,
+            retry_delay=args.retry_delay,
+            retry_max_delay=args.retry_max_delay,
+            retry_budget_seconds=args.retry_budget_seconds,
         )
         initial_prompt = _resolve_initial_prompt(args)
         optimize = (
@@ -144,11 +263,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+        coevolution_protocol = resolve_coevolution_protocol(args.coevolution_protocol)
+        attack_rule_profile = args.attack_rule_profile
+        if attack_rule_profile is None:
+            if args.coevolution_protocol == "duel":
+                attack_rule_profile = "duel_natural"
+            elif args.coevolution_protocol == "arms_race":
+                attack_rule_profile = "arms_race_natural"
+            else:
+                attack_rule_profile = "attacker_advantage"
+        attack_rules = resolve_attack_rules(
+            attack_rule_profile,
+            coevolution_protocol=args.coevolution_protocol,
+        )
+        task_temperature = resolve_task_temperature(
+            coevolution_protocol,
+            cli_override=args.task_temperature,
+        )
+
         def pipeline_factory(system_message: str | None) -> tuple[Any, str]:
             pipeline = build_dojo_pipeline(
                 config,
                 defense=args.defense,
-                temperature=args.task_temperature,
+                temperature=task_temperature,
                 timeout=args.timeout,
                 max_retries=args.max_retries,
                 max_tokens=task_max_tokens,
@@ -164,28 +301,58 @@ def main(argv: Sequence[str] | None = None) -> int:
         qualification_pipeline = build_dojo_pipeline(
             config,
             defense="none",
-            temperature=args.task_temperature,
+            temperature=task_temperature,
             timeout=args.timeout,
             max_retries=args.max_retries,
             max_tokens=task_max_tokens,
             tool_output_format=args.tool_output_format,
         )
-        initial_harness = DefenseHarness(
+        base_prompt = initial_prompt or _default_system_prompt(qualification_pipeline)
+        bootstrap = (
+            coevolution_protocol.defense_bootstrap
+            if optimize and args.freeze_harness_from is None
+            else "none"
+        )
+        initial_harness = build_bootstrap_harness(
+            base_prompt=base_prompt,
+            bootstrap=bootstrap,
             name=args.defense,
-            prompt=initial_prompt or _default_system_prompt(qualification_pipeline),
             version=0,
+        )
+        from contract_heldout_ipi.defenses.harness import AttackHarness  # noqa: E402
+        from contract_heldout_ipi.dojo.dynamic_attack import (  # noqa: E402
+            DOJO_ATTACK_NATURAL_LANGUAGE_PROMPT,
+            DOJO_ATTACK_SYSTEM_PROMPT,
+        )
+
+        attack_prompt = (
+            DOJO_ATTACK_NATURAL_LANGUAGE_PROMPT
+            if attack_rules.natural_language_only
+            else DOJO_ATTACK_SYSTEM_PROMPT
         )
         attack_generator = DojoDynamicAttackGenerator(
             attack_client,
             max_attempts=args.attack_attempts,
-            max_payload_chars=args.max_payload_chars,
+            max_payload_chars=min(args.max_payload_chars, attack_rules.max_payload_chars),
+            attack_rules=attack_rules,
         )
+        if coevolution_protocol.preferred_attack_strategies and hasattr(
+            attack_generator, "set_preferred_strategies"
+        ):
+            attack_generator.set_preferred_strategies(
+                coevolution_protocol.preferred_attack_strategies
+            )
         runner = DojoCoevolutionRunner(
             suite=suite,
             generator=attack_generator,
             qualification_pipeline=qualification_pipeline,
             pipeline_factory=pipeline_factory,
             initial_harness=initial_harness,
+            initial_attack_harness=AttackHarness(
+                name="attack-generator",
+                prompt=attack_prompt,
+                version=0,
+            ),
             optimizer=(
                 DojoHarnessOptimizer(
                     optimizer_client, max_attempts=args.optimizer_attempts
@@ -195,9 +362,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             attack_optimizer=(
                 DojoAttackOptimizer(
-                    optimizer_client, max_attempts=args.attack_optimizer_attempts
+                    attack_client, max_attempts=args.attack_optimizer_attempts
                 )
                 if optimize
+                else None
+            ),
+            payload_optimizer=(
+                DojoPayloadOptimizer(
+                    attack_client,
+                    max_attempts=args.attack_optimizer_attempts,
+                    refine_candidates=args.payload_refine_candidates,
+                )
+                if optimize
+                else None
+            ),
+            template_optimizer=(
+                DojoTemplateOptimizer(
+                    attack_client, max_attempts=args.attack_optimizer_attempts
+                )
+                if optimize and coevolution_protocol.template_optimizer_each_round
                 else None
             ),
             qualification_candidates=args.qualification_candidates,
@@ -207,7 +390,59 @@ def main(argv: Sequence[str] | None = None) -> int:
             train_rounds=args.train_rounds,
             max_archive_size=args.max_archive_size,
             attack_memory_limit=args.attack_memory_limit,
+            expand_injectable_vectors=not args.strict_injectable_vectors,
+            attack_rules=attack_rules,
+            coevolution_protocol=coevolution_protocol,
+            coevolution_protocol_profile=args.coevolution_protocol,
+            payload_refine_candidates=args.payload_refine_candidates,
+            same_round_attack_iters=args.same_round_attack_iters,
+            negotiator=(
+                DojoGameNegotiator(
+                    attack_client,
+                    defense_client,
+                    rule_judge_client,
+                    constitution=(
+                        DUEL_DOJO_CONSTITUTION
+                        if args.coevolution_protocol == "duel"
+                        else DEFAULT_DOJO_CONSTITUTION
+                    ),
+                )
+                if optimize and args.negotiate_each_round
+                else None
+            ),
+            negotiation_rounds_per_train_round=args.negotiation_rounds,
         )
+        print(
+            f"AgentDojo coevolution {suite_name} {args.split} ({benchmark_version})",
+            flush=True,
+        )
+        print(
+            f"Attack model / task model / defense: {attack_model} / "
+            f"{task_model} / {args.defense}",
+            flush=True,
+        )
+        print(f"Attack rule profile: {attack_rule_profile}", flush=True)
+        print(f"Task temperature: {task_temperature}", flush=True)
+        print(f"Co-evolution protocol: {args.coevolution_protocol}", flush=True)
+        print(
+            f"Negotiate each round: {'on' if args.negotiate_each_round else 'off'}",
+            flush=True,
+        )
+        print(
+            "Role models: "
+            f"attack={config.attack_model} / defense={config.defense_model} / "
+            f"judge={config.for_role('rule_judge').model} / "
+            f"work={task_model}",
+            flush=True,
+        )
+        print(
+            f"Pairs≈{args.max_pairs} rounds={args.train_rounds} "
+            f"timeout={args.timeout}s retries={args.max_retries} "
+            f"backoff={args.retry_delay}s..{args.retry_max_delay}s "
+            f"budget={args.retry_budget_seconds}s",
+            flush=True,
+        )
+        print("Starting runner.run() ...", flush=True)
         report = runner.run(
             user_task_ids=user_ids,
             injection_task_ids=injection_ids,
@@ -242,6 +477,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"Attack model / task model / defense: {dynamic.attack_model} / "
         f"{dynamic.task_model} / {dynamic.defense}"
     )
+    print(f"Attack rule profile: {attack_rule_profile}")
+    print(f"Task temperature: {task_temperature}")
+    print(f"Co-evolution protocol: {args.coevolution_protocol}")
+    print(
+        f"Negotiate each round: "
+        f"{'on' if report.negotiate_each_round else 'off'} "
+        f"(transcripts={len(report.negotiation_transcripts)})"
+    )
+    print(
+        "Role models: "
+        f"attack={config.attack_model} / defense={config.defense_model} / "
+        f"judge={config.rule_judge_model or config.judge_model} / "
+        f"work={task_model}"
+    )
     print(
         f"Train rounds: {report.train_rounds} | archive size: {len(report.archive)} | "
         f"league replays: {len(report.league_replays)}"
@@ -264,6 +513,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(f"Defense harness updates: {len(report.harness_updates)}")
     print(f"Attack harness updates: {len(report.attack_updates)}")
+    print(f"Payload refines: {len(getattr(report, 'payload_refines', ()) or ())}")
     print("Optimization trajectory (R=round, DefV/AtkV=versions, LgASR=league ASR):")
     print(format_optimization_trajectory(report.optimization_trajectory))
     if report.attack_updates:

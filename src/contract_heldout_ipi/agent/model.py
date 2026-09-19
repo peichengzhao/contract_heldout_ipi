@@ -6,6 +6,7 @@ import json
 import os
 import ast
 import http.client
+import random
 import time
 import urllib.error
 import urllib.request
@@ -168,6 +169,7 @@ class ExperimentModelConfig:
                 "rule_judge_model",
                 "optimizer_model",
                 "task_agent_model",
+                "work_agent",
                 "deepseek_base_url",
                 "deepseek_api_key",
                 "judge_model",
@@ -188,6 +190,20 @@ class ExperimentModelConfig:
             values.setdefault("judge_model", protect_model)
             values.setdefault("rule_judge_model", protect_model)
             values.setdefault("task_agent_model", protect_model)
+        # Four-agent Dojo naming: WORK_AGENT is the task-executing agent.
+        work_agent = values.pop("work_agent", "").strip()
+        if work_agent:
+            values.setdefault("task_agent_model", work_agent)
+            values.setdefault("agent_model", work_agent)
+        # Defense agent updates harness; default optimizer to defense_model.
+        if values.get("defense_model", "").strip() and not values.get(
+            "optimizer_model", ""
+        ).strip():
+            values.setdefault("optimizer_model", values["defense_model"].strip())
+        if values.get("judge_model", "").strip() and not values.get(
+            "rule_judge_model", ""
+        ).strip():
+            values.setdefault("rule_judge_model", values["judge_model"].strip())
         return cls._from_values(values, source="experiment config")
 
     @classmethod
@@ -198,7 +214,8 @@ class ExperimentModelConfig:
             "agent_model": os.getenv("AGENT_MODEL", ""),
             "rule_judge_model": os.getenv("RULE_JUDGE_MODEL", ""),
             "optimizer_model": os.getenv("OPTIMIZER_MODEL", ""),
-            "task_agent_model": os.getenv("TASK_AGENT_MODEL", ""),
+            "task_agent_model": os.getenv("TASK_AGENT_MODEL", "")
+            or os.getenv("WORK_AGENT", ""),
             "deepseek_base_url": os.getenv("DEEPSEEK_BASE_URL", ""),
             "deepseek_api_key": os.getenv("DEEPSEEK_API_KEY", ""),
             "judge_model": os.getenv("JUDGE_MODEL", ""),
@@ -223,6 +240,10 @@ class ExperimentModelConfig:
         ):
             if not values.get(optional):
                 values.pop(optional, None)
+        if values.get("defense_model") and not values.get("optimizer_model"):
+            values["optimizer_model"] = values["defense_model"]
+        if values.get("judge_model") and not values.get("rule_judge_model"):
+            values["rule_judge_model"] = values["judge_model"]
         return cls._from_values(values, source="environment experiment configuration")
 
     @classmethod
@@ -344,6 +365,9 @@ def build_role_client(
     max_tokens: int = 1024,
     max_retries: int = 2,
     retry_delay: float = 1.0,
+    retry_max_delay: float = 120.0,
+    retry_budget_seconds: float = 0.0,
+    retry_jitter: bool = True,
 ) -> ChatModelClient:
     """Build the chat client for a model role.
 
@@ -360,6 +384,9 @@ def build_role_client(
             timeout=timeout,
             max_retries=max_retries,
             retry_delay=retry_delay,
+            retry_max_delay=retry_max_delay,
+            retry_budget_seconds=retry_budget_seconds,
+            retry_jitter=retry_jitter,
         )
     return OpenAICompatibleChatClient(
         config.for_role(role),
@@ -368,6 +395,9 @@ def build_role_client(
         max_tokens=max_tokens,
         max_retries=max_retries,
         retry_delay=retry_delay,
+        retry_max_delay=retry_max_delay,
+        retry_budget_seconds=retry_budget_seconds,
+        retry_jitter=retry_jitter,
     )
 
 
@@ -474,6 +504,9 @@ class OpenAICompatibleChatClient:
         max_tokens: int = 1024,
         max_retries: int = 2,
         retry_delay: float = 1.0,
+        retry_max_delay: float = 120.0,
+        retry_budget_seconds: float = 0.0,
+        retry_jitter: bool = True,
         transport: JsonTransport | None = None,
     ):
         if timeout <= 0:
@@ -484,12 +517,19 @@ class OpenAICompatibleChatClient:
             raise ValueError("max_retries must be non-negative")
         if retry_delay < 0:
             raise ValueError("retry_delay must be non-negative")
+        if retry_max_delay < 0:
+            raise ValueError("retry_max_delay must be non-negative")
+        if retry_budget_seconds < 0:
+            raise ValueError("retry_budget_seconds must be non-negative")
         self.config = config
         self.timeout = timeout
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.retry_max_delay = retry_max_delay
+        self.retry_budget_seconds = retry_budget_seconds
+        self.retry_jitter = retry_jitter
         self.transport = transport or UrllibJsonTransport()
 
     def complete(
@@ -507,7 +547,14 @@ class OpenAICompatibleChatClient:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        for attempt in range(self.max_retries + 1):
+        started = time.monotonic()
+        deadline = (
+            started + self.retry_budget_seconds
+            if self.retry_budget_seconds > 0
+            else None
+        )
+        attempt = 0
+        while True:
             try:
                 response = self.transport.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
@@ -528,21 +575,107 @@ class OpenAICompatibleChatClient:
                     status_code=exc.status_code,
                     retryable=exc.retryable,
                 )
-                if not exc.retryable or attempt >= self.max_retries:
+                if not exc.retryable or not _should_retry_again(
+                    attempt=attempt,
+                    max_retries=self.max_retries,
+                    deadline=deadline,
+                ):
                     raise safe_error from exc
-                time.sleep(self.retry_delay * (2**attempt))
+                delay = _compute_backoff_seconds(
+                    attempt,
+                    base=self.retry_delay,
+                    max_delay=self.retry_max_delay,
+                    jitter=self.retry_jitter,
+                    deadline=deadline,
+                )
+                _log_retry_wait(
+                    model=self.config.model,
+                    attempt=attempt + 1,
+                    delay=delay,
+                    error=safe_error,
+                    deadline=deadline,
+                )
+                time.sleep(delay)
+                attempt += 1
             except ModelResponseError as exc:
                 contextual = ModelResponseError(
                     f"model '{self.config.model}' returned an invalid response: {exc}"
                 )
+                # Invalid responses use count-based retries only (no long budget wait).
                 if attempt >= self.max_retries:
                     raise contextual from exc
                 if "finish_reason='length'" in str(exc):
                     current_limit = payload.get("max_tokens", self.max_tokens)
                     if isinstance(current_limit, int):
                         payload["max_tokens"] = min(current_limit * 2, 65_536)
-                time.sleep(self.retry_delay * (2**attempt))
-        raise AssertionError("unreachable completion retry state")
+                delay = _compute_backoff_seconds(
+                    attempt,
+                    base=self.retry_delay,
+                    max_delay=self.retry_max_delay,
+                    jitter=self.retry_jitter,
+                    deadline=None,
+                )
+                time.sleep(delay)
+                attempt += 1
+
+
+def _should_retry_again(
+    *,
+    attempt: int,
+    max_retries: int,
+    deadline: float | None,
+) -> bool:
+    """Return True if another retry is allowed after ``attempt`` failures so far.
+
+    ``attempt`` is 0-based count of failures already observed (before sleeping).
+    """
+    if attempt < max_retries:
+        return True
+    if deadline is None:
+        return False
+    return time.monotonic() < deadline
+
+
+def _compute_backoff_seconds(
+    attempt: int,
+    *,
+    base: float,
+    max_delay: float,
+    jitter: bool,
+    deadline: float | None,
+) -> float:
+    """Exponential backoff: base * 2^attempt, capped, optional jitter, budget-aware."""
+    delay = min(max_delay, base * (2**attempt)) if base > 0 else 0.0
+    if jitter and delay > 0:
+        # Uniform in [0.5, 1.5) * delay to avoid synchronized stampedes.
+        delay = delay * (0.5 + random.random())
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 0.0
+        delay = min(delay, remaining)
+    return max(0.0, delay)
+
+
+def _log_retry_wait(
+    *,
+    model: str,
+    attempt: int,
+    delay: float,
+    error: ModelAPIError,
+    deadline: float | None,
+) -> None:
+    remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+    budget = (
+        "inf"
+        if remaining is None
+        else f"{remaining:.0f}s budget left"
+    )
+    print(
+        f"[retry] model={model} attempt={attempt} sleep={delay:.1f}s "
+        f"({budget}) status={error.status_code} err={str(error)[:160]}",
+        flush=True,
+    )
 
 
 def _parse_chat_completion(response: dict[str, Any]) -> ModelResponse:

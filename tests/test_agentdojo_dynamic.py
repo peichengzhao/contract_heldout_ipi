@@ -34,6 +34,78 @@ class FakeClient:
         return self.responses.pop(0)
 
 
+def test_dynamic_generator_parses_structured_vector_payloads() -> None:
+    client = FakeClient(
+        [
+            ModelResponse(
+                content=json.dumps(
+                    {
+                        "strategy": "tool_specific_instruction",
+                        "vector_payloads": {
+                            "drive_document_injection": {
+                                "format": "yaml_fragment",
+                                "content": "workflow_action:\n  action: send_email",
+                            }
+                        },
+                        "rationale": "structured",
+                    }
+                )
+            )
+        ]
+    )
+    generator = DojoDynamicAttackGenerator(client)
+    user_task = SimpleNamespace(ID="user_task_0", PROMPT="Read the document")
+    injection_task = SimpleNamespace(ID="injection_task_0", GOAL="Send an email")
+    tools = [SimpleNamespace(name="send_email", description="Send an email")]
+
+    plan = generator.generate(
+        user_task=user_task,
+        injection_task=injection_task,
+        injectable_vectors=["drive_document_injection"],
+        tools=tools,
+        defense_harness="system prompt",
+    )
+
+    assert plan.payload_formats[0][1] == "yaml_fragment"
+
+
+def test_dynamic_generator_parses_heterogeneous_vector_payloads() -> None:
+    client = FakeClient(
+        [
+            ModelResponse(
+                content=json.dumps(
+                    {
+                        "strategy": "workflow_continuity",
+                        "vector_payloads": {
+                            "drive_document_injection": "Document-side lure.",
+                            "calendar_networking_event_injection_email": "Calendar-side lure.",
+                        },
+                        "rationale": "multi-vector",
+                    }
+                )
+            )
+        ]
+    )
+    generator = DojoDynamicAttackGenerator(client)
+    user_task = SimpleNamespace(ID="user_task_0", PROMPT="Read the document")
+    injection_task = SimpleNamespace(ID="injection_task_0", GOAL="Send an email")
+    tools = [SimpleNamespace(name="send_email", description="Send an email")]
+
+    plan = generator.generate(
+        user_task=user_task,
+        injection_task=injection_task,
+        injectable_vectors=[
+            "drive_document_injection",
+            "calendar_networking_event_injection_email",
+        ],
+        tools=tools,
+        defense_harness="system prompt",
+    )
+
+    assert len(plan.vector_payloads) == 2
+    assert plan.vector_payloads[0][1] != plan.vector_payloads[1][1]
+
+
 def test_dynamic_generator_receives_harness_and_failed_trajectory() -> None:
     client = FakeClient(
         [
@@ -108,13 +180,13 @@ class SequenceGenerator:
     def __init__(self):
         self.calls = []
         self.plans = [
-            DojoAttackPlan(
+            DojoAttackPlan.single(
                 "direct_instruction",
                 "candidate fails",
                 ("vector_1",),
                 "first",
             ),
-            DojoAttackPlan(
+            DojoAttackPlan.single(
                 "authority_impersonation",
                 "candidate wins",
                 ("vector_1",),
@@ -165,6 +237,7 @@ def test_runner_feeds_failure_to_next_candidate_and_admits_only_success() -> Non
         qualification_success_min=1,
         defense_replay_runs=1,
         injection_vector_resolver=lambda _: ["vector_1"],
+        expand_injectable_vectors=False,
         attack_memory=[
             {
                 "user_task_id": "other",
@@ -213,6 +286,7 @@ def test_majority_qualification_requires_multiple_successes() -> None:
         qualification_success_min=2,
         defense_replay_runs=1,
         injection_vector_resolver=lambda _: ["vector_1"],
+        expand_injectable_vectors=False,
     )
 
     report = runner.run(

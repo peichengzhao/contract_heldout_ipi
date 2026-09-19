@@ -125,8 +125,29 @@ def test_experiment_model_config_resolves_three_roles(tmp_path):
     assert config.for_role("judge").model == "judge"
     assert config.for_role("judge").api_key == "test-secret"
     assert config.for_role("rule_judge").model == "judge"
-    assert config.for_role("optimizer").model == "judge"
+    # Defense agent owns harness updates when OPTIMIZER_MODEL is unset.
+    assert config.for_role("optimizer").model == "defender"
     assert config.for_role("task_agent").model == "defender"
+
+
+def test_experiment_model_config_accepts_work_agent_alias(tmp_path):
+    path = tmp_path / "models.py"
+    path.write_text(
+        'OPENAI_BASE_URL = "https://gateway.example/v1"\n'
+        'OPENAI_API_KEY = "test-secret"\n'
+        'ATTACK_MODEL = "atk"\n'
+        'DEFENSE_MODEL = "defn"\n'
+        'JUDGE_MODEL = "jdg"\n'
+        'WORK_AGENT = "worker"\n',
+        encoding="utf-8",
+    )
+    config = ExperimentModelConfig.from_file(path)
+    assert config.for_role("attack").model == "atk"
+    assert config.for_role("defense").model == "defn"
+    assert config.for_role("judge").model == "jdg"
+    assert config.for_role("rule_judge").model == "jdg"
+    assert config.for_role("optimizer").model == "defn"
+    assert config.for_role("task_agent").model == "worker"
 
 
 def test_experiment_model_config_resolves_independent_game_roles(tmp_path):
@@ -468,6 +489,7 @@ def test_retryable_model_error_is_retried():
         ModelConfig("test-model", "https://gateway.example/v1", "secret"),
         max_retries=2,
         retry_delay=0,
+        retry_jitter=False,
         transport=transport,
     )
 
@@ -475,6 +497,64 @@ def test_retryable_model_error_is_retried():
 
     assert response.content == "Done"
     assert transport.call_count == 2
+
+
+def test_exponential_backoff_caps_and_respects_budget(monkeypatch):
+    from contract_heldout_ipi.agent import model as model_mod
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(model_mod.time, "sleep", lambda s: sleeps.append(s))
+    # Freeze monotonic progression except we advance manually via sleeps side effect.
+    clock = {"t": 1000.0}
+
+    def fake_monotonic() -> float:
+        return clock["t"]
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["t"] += seconds
+
+    monkeypatch.setattr(model_mod.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(model_mod.time, "sleep", fake_sleep)
+
+    transport = SequenceTransport(
+        [
+            ModelAPIError("503 channel", status_code=503, retryable=True),
+            ModelAPIError("503 channel", status_code=503, retryable=True),
+            ModelAPIError("503 channel", status_code=503, retryable=True),
+            {"choices": [{"message": {"content": "Recovered"}}]},
+        ]
+    )
+    client = OpenAICompatibleChatClient(
+        ModelConfig("test-model", "https://gateway.example/v1", "secret"),
+        max_retries=1,  # would stop after 1 retry without budget
+        retry_delay=2.0,
+        retry_max_delay=8.0,
+        retry_budget_seconds=60.0,
+        retry_jitter=False,
+        transport=transport,
+    )
+
+    response = client.complete([{"role": "user", "content": "Task"}], [])
+
+    assert response.content == "Recovered"
+    assert transport.call_count == 4
+    # attempt 0 -> 2, attempt 1 -> 4, attempt 2 -> 8 (capped)
+    assert sleeps == [2.0, 4.0, 8.0]
+
+
+def test_compute_backoff_seconds_caps():
+    from contract_heldout_ipi.agent.model import _compute_backoff_seconds
+
+    assert _compute_backoff_seconds(
+        0, base=2.0, max_delay=100.0, jitter=False, deadline=None
+    ) == 2.0
+    assert _compute_backoff_seconds(
+        1, base=2.0, max_delay=100.0, jitter=False, deadline=None
+    ) == 4.0
+    assert _compute_backoff_seconds(
+        10, base=2.0, max_delay=30.0, jitter=False, deadline=None
+    ) == 30.0
 
 
 def test_empty_assistant_response_is_retried_with_model_context():

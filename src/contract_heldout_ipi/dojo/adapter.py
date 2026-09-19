@@ -77,6 +77,29 @@ def build_manifest(
     )
 
 
+def expand_injectable_vectors(
+    suite: Any,
+    primary_vectors: Sequence[str],
+    *,
+    include_suite_vectors: bool = True,
+) -> tuple[str, ...]:
+    """Union task-specific vectors with the full suite injection surface.
+
+    ``primary_vectors`` are the vectors AgentDojo marks as reachable during a
+    correct no-attack execution. G1 expands the attacker's writable surface to
+    every workspace injection slot so multi-vector plans are not rejected upfront.
+    """
+    primary = tuple(dict.fromkeys(primary_vectors))
+    if not include_suite_vectors:
+        return primary
+    defaults = suite.get_injection_vector_defaults()
+    if isinstance(defaults, dict):
+        suite_vectors = tuple(defaults.keys())
+    else:
+        suite_vectors = tuple(defaults)
+    return tuple(dict.fromkeys([*primary, *suite_vectors]))
+
+
 def select_task_ids(
     available: Sequence[str],
     requested: Sequence[str] | None,

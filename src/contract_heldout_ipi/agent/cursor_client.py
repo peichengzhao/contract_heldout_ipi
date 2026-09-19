@@ -9,7 +9,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .model import ModelAPIError, ModelConfigurationError, ModelResponse, ModelResponseError
+from .model import (
+    ModelAPIError,
+    ModelConfigurationError,
+    ModelResponse,
+    ModelResponseError,
+    _compute_backoff_seconds,
+    _log_retry_wait,
+    _should_retry_again,
+)
 
 PromptFn = Callable[[str], str]
 
@@ -30,6 +38,9 @@ class CursorChatClient:
         timeout: float = 180.0,
         max_retries: int = 2,
         retry_delay: float = 1.0,
+        retry_max_delay: float = 120.0,
+        retry_budget_seconds: float = 0.0,
+        retry_jitter: bool = True,
         prompt_fn: PromptFn | None = None,
     ):
         if not model.strip():
@@ -42,12 +53,19 @@ class CursorChatClient:
             raise ValueError("max_retries must be non-negative")
         if retry_delay < 0:
             raise ValueError("retry_delay must be non-negative")
+        if retry_max_delay < 0:
+            raise ValueError("retry_max_delay must be non-negative")
+        if retry_budget_seconds < 0:
+            raise ValueError("retry_budget_seconds must be non-negative")
         self.model = model.strip()
         self.api_key = api_key.strip()
         self.cwd = str(cwd) if cwd is not None else None
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.retry_max_delay = retry_max_delay
+        self.retry_budget_seconds = retry_budget_seconds
+        self.retry_jitter = retry_jitter
         self._prompt_fn = prompt_fn
         self._owned_cwd: tempfile.TemporaryDirectory[str] | None = None
         self._client: Any | None = None
@@ -63,7 +81,15 @@ class CursorChatClient:
                 "CursorChatClient only supports text completion with tools=[]"
             )
         prompt = _format_chat_messages(messages)
-        for attempt in range(self.max_retries + 1):
+        started = time.monotonic()
+        deadline = (
+            started + self.retry_budget_seconds
+            if self.retry_budget_seconds > 0
+            else None
+        )
+        attempt = 0
+        content = ""
+        while True:
             try:
                 content = self._run_prompt(prompt)
                 break
@@ -73,9 +99,28 @@ class CursorChatClient:
                     status_code=exc.status_code,
                     retryable=exc.retryable,
                 )
-                if not exc.retryable or attempt >= self.max_retries:
+                if not exc.retryable or not _should_retry_again(
+                    attempt=attempt,
+                    max_retries=self.max_retries,
+                    deadline=deadline,
+                ):
                     raise safe_error from exc
-                time.sleep(self.retry_delay * (2**attempt))
+                delay = _compute_backoff_seconds(
+                    attempt,
+                    base=self.retry_delay,
+                    max_delay=self.retry_max_delay,
+                    jitter=self.retry_jitter,
+                    deadline=deadline,
+                )
+                _log_retry_wait(
+                    model=self.model,
+                    attempt=attempt + 1,
+                    delay=delay,
+                    error=safe_error,
+                    deadline=deadline,
+                )
+                time.sleep(delay)
+                attempt += 1
         if not content.strip():
             raise ModelResponseError("Cursor agent returned empty text")
         return ModelResponse(content=content)

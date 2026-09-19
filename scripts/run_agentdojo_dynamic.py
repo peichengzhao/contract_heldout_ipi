@@ -69,6 +69,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--attack-temperature", type=float, default=0.9)
     parser.add_argument("--task-temperature", type=float, default=0.0)
     parser.add_argument("--tool-output-format", choices=("yaml", "json"), default="yaml")
+    parser.add_argument(
+        "--strict-injectable-vectors",
+        action="store_true",
+        help=(
+            "Only allow injection into task-reachable vectors (legacy behavior). "
+            "Default expands to the full workspace injection surface (G1)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -151,6 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             qualification_replay_runs=args.qualification_replay_runs,
             qualification_success_min=args.qualification_success_min,
             defense_replay_runs=args.defense_replay_runs,
+            expand_injectable_vectors=not args.strict_injectable_vectors,
         )
         report = runner.run(
             user_task_ids=user_ids,

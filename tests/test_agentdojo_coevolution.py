@@ -69,7 +69,7 @@ class FakeAttackOptimizer:
 
 
 def _fake_pair_result(*, attack_success: bool) -> SimpleNamespace:
-    admitted_plan = DojoAttackPlan(
+    admitted_plan = DojoAttackPlan.single(
         strategy="direct_instruction",
         payload="do bad thing",
         target_vectors=("calendar_networking_event_injection_email",),
@@ -113,6 +113,7 @@ def test_coevolution_runner_records_harness_updates(monkeypatch) -> None:
         return SimpleNamespace(
             user_task_id=user_task_id,
             injection_task_id=injection_task_id,
+            discovered_vectors=("calendar_networking_event_injection_email",),
             injectable_vectors=("calendar_networking_event_injection_email",),
             qualification_attempts=(),
             admitted_plan=result.admitted_plan,
@@ -167,7 +168,7 @@ def test_coevolution_runner_records_harness_updates(monkeypatch) -> None:
         run_clean=False,
         optimize=True,
     )
-    assert report.schema_version == 3
+    assert report.schema_version == 4
     assert report.final_harness_version == 1
     assert report.final_attack_harness_version == 1
     assert len(report.harness_updates) == 1
@@ -195,9 +196,10 @@ def test_coevolution_runner_replays_archive_after_harness_update(monkeypatch) ->
         return SimpleNamespace(
             user_task_id=user_task_id,
             injection_task_id=injection_task_id,
+            discovered_vectors=("vector",),
             injectable_vectors=("vector",),
             qualification_attempts=(),
-            admitted_plan=DojoAttackPlan(
+            admitted_plan=DojoAttackPlan.single(
                 "direct_instruction",
                 "payload",
                 ("vector",),
@@ -256,6 +258,82 @@ def test_coevolution_runner_replays_archive_after_harness_update(monkeypatch) ->
     assert replay_calls == [1, 1, 1]
 
 
+def test_train_rounds_force_attack_optimizer_when_round_has_no_updates(monkeypatch) -> None:
+    from contract_heldout_ipi.dojo import coevolution_runner as module
+    from contract_heldout_ipi.dojo.attack_rules import ATTACKER_ADVANTAGE_DOJO_ATTACK_RULES
+
+    optimize_calls: list[str] = []
+
+    class TrackingAttackOptimizer:
+        def optimize(self, **kwargs):
+            optimize_calls.append(kwargs["trigger"])
+            harness = kwargs["harness"]
+            from contract_heldout_ipi.dojo.attack_optimizer import DojoAttackUpdate
+
+            return DojoAttackUpdate(
+                harness=harness.revised(harness.prompt + "\nForced update."),
+                rationale="forced",
+                trigger=kwargs["trigger"],
+            )
+
+    def fake_run_pair(_self, user_task_id, injection_task_id):
+        return SimpleNamespace(
+            user_task_id=user_task_id,
+            injection_task_id=injection_task_id,
+            discovered_vectors=("vector",),
+            injectable_vectors=("vector",),
+            qualification_attempts=(),
+            admitted_plan=None,
+            admitted_injections=None,
+            defense_result=None,
+            defense_replay_summary=None,
+            qualified=False,
+        )
+
+    monkeypatch.setattr(module.DojoQualificationRunner, "_run_pair", fake_run_pair)
+    monkeypatch.setattr(module, "_replay_archive", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        module,
+        "_execute_native_clean",
+        lambda *_a, **_k: DojoNativeResult(
+            utility=True,
+            security=None,
+            attack_success=None,
+            trace=DojoExecutionTrace((), (), ""),
+        ),
+    )
+    monkeypatch.setattr(module, "version", lambda _name: "0.0.test")
+
+    suite = SimpleNamespace(
+        get_user_task_by_id=lambda _id: SimpleNamespace(PROMPT="user"),
+        get_injection_task_by_id=lambda _id: SimpleNamespace(GOAL="goal"),
+    )
+    runner = module.DojoCoevolutionRunner(
+        suite=suite,
+        generator=SimpleNamespace(set_system_prompt=lambda _prompt: None),
+        qualification_pipeline=object(),
+        pipeline_factory=lambda prompt: (object(), prompt),
+        initial_harness=DefenseHarness(name="none", prompt="base", version=0),
+        attack_optimizer=TrackingAttackOptimizer(),
+        attack_rules=ATTACKER_ADVANTAGE_DOJO_ATTACK_RULES,
+        train_rounds=1,
+    )
+    report = runner.run(
+        user_task_ids=("user_task_0",),
+        injection_task_ids=("injection_task_0",),
+        benchmark_version="v1.2.2",
+        suite_name="workspace",
+        split="train",
+        attack_model="attack",
+        task_model="task",
+        defense_name="none",
+        run_clean=False,
+        optimize=True,
+    )
+    assert "round_forced" in optimize_calls
+    assert report.final_attack_harness_version == 1
+
+
 def test_train_rounds_rerun_pairs_and_accumulate_archive(monkeypatch) -> None:
     from contract_heldout_ipi.dojo import coevolution_runner as module
 
@@ -266,6 +344,7 @@ def test_train_rounds_rerun_pairs_and_accumulate_archive(monkeypatch) -> None:
         return SimpleNamespace(
             user_task_id=user_task_id,
             injection_task_id=injection_task_id,
+            discovered_vectors=("vector",),
             injectable_vectors=("vector",),
             qualification_attempts=(),
             admitted_plan=None,

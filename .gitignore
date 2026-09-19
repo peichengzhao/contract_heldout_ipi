@@ -15,3 +15,7 @@ results/
 api_information.md
 *_model_config.md
 private_model_config.md
+# Local model gateway configs with secrets (keep *.example.py)
+model_api_ablation.py
+model_api_arms_race.py
+model_api_hetero.py

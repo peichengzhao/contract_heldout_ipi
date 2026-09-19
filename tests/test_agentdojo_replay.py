@@ -54,6 +54,7 @@ def test_admitted_metrics_uses_replay_means_not_single_bools() -> None:
     pair = DojoDynamicPairResult(
         user_task_id="user_task_0",
         injection_task_id="injection_task_0",
+        discovered_vectors=("vector",),
         injectable_vectors=("vector",),
         qualification_attempts=(),
         admitted_plan=None,
