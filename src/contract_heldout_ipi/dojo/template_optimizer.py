@@ -115,7 +115,12 @@ def _parse_update(content: str | None) -> tuple[list[PayloadTemplate], str]:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         normalized = "\n".join(lines).strip()
-    value = json.loads(normalized)
+    try:
+        value = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        raise ModelResponseError(
+            "dojo template optimizer returned invalid JSON"
+        ) from exc
     if not isinstance(value, dict):
         raise ModelResponseError("dojo template optimizer response must be an object")
     templates_raw = value.get("templates")
