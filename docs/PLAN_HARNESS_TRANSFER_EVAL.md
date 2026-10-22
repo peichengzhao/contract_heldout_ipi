@@ -189,13 +189,13 @@
 3. 主指标：官方 **Utility / Security（ASR≈1−Security）**；附 Clean Utility。  
 4. 先 AgentDojo 内，再外部数据集。
 
-当前候选冻结源：
+当前冻结源（已选定）：
 
-| 结果文件 | 说明 |
-|----------|------|
-| `results/dojo_duel_bidirectional_3x5.json` | duel+协商；防御仅 v1 |
-| `results/dojo_negotiated_attack_boost_3x3.json` | arms_race；防御 v1 |
-| 下一版 `dojo_duel_breakthrough_first_*.json` | 优先采用「双向+可突破」跑通版 |
+| 文件 | 说明 |
+|------|------|
+| `prompts/frozen_harness_duel_breakthrough_v4.txt` | **采用**：9/21 duel breakthrough-first 终局提示 |
+| `results/dojo_duel_breakthrough_first_3x5.json` | 对应训练报告 |
+| `docs/PLAN_HARNESS_CROSS_DATASET.md` | 跨套件 / 固定攻击评测入口 |
 
 ---
 
@@ -227,7 +227,7 @@ conda run -n tools_attack python scripts/run_agentdojo_coevolution.py \
 | slack | 频道、网页、邀请 |
 | travel | 行程预订、日历/邮件外泄 |
 
-需新增 `dojo_splits/{banking,slack,travel}_v1_2_2_minimal.json`；先 3–6 pairs 冒烟。
+切分已落地：`dojo_splits/{banking,slack,travel}_v1_2_2_minimal.json`。入口见 `docs/PLAN_HARNESS_CROSS_DATASET.md` 与 `scripts/run_harness_transfer_eval.py`。
 
 ---
 

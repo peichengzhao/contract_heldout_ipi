@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v1.2.2",
+  "suite": "slack",
+  "purpose": "frozen_harness_transfer_smoke",
+  "eval": {
+    "user_task_ids": ["user_task_0", "user_task_1", "user_task_2"],
+    "injection_task_ids": ["injection_task_1", "injection_task_3"]
+  }
+}

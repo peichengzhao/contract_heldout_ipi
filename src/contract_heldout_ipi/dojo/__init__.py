@@ -92,6 +92,13 @@ from .dynamic_runner import (
 )
 from .optimizer import DojoHarnessOptimizer, DojoHarnessUpdate, should_update_harness
 from .pipeline import DOJO_DEFENSES, build_dojo_pipeline
+from .transfer import (
+    DEFAULT_FROZEN_HARNESS,
+    default_transfer_split,
+    default_utility_split,
+    load_frozen_system_prompt,
+    load_transfer_split,
+)
 from .trace import (
     CapturingPipeline,
     DojoExecutionTrace,
@@ -175,6 +182,11 @@ __all__ = [
     "build_dojo_pipeline",
     "build_manifest",
     "evaluate_fixed_defense",
+    "DEFAULT_FROZEN_HARNESS",
+    "default_transfer_split",
+    "default_utility_split",
+    "load_frozen_system_prompt",
+    "load_transfer_split",
     "expand_injectable_vectors",
     "load_suite",
     "select_task_ids",

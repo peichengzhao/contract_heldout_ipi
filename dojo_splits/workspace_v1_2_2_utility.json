@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "v1.2.2",
+  "suite": "workspace",
+  "purpose": "frozen_harness_clean_utility",
+  "utility": {
+    "user_task_ids": [
+      "user_task_0",
+      "user_task_1",
+      "user_task_2",
+      "user_task_6",
+      "user_task_16",
+      "user_task_24",
+      "user_task_26",
+      "user_task_33"
+    ]
+  }
+}

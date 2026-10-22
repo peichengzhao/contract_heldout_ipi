@@ -185,7 +185,10 @@ def build_dojo_pipeline(
         max_output_tokens=max_tokens,
     )
     # AgentDojo uses the element name for attack metadata and trace paths.
-    llm.name = model_config.model
+    # important_instructions looks up a prose model name via substring match on
+    # pipeline.name. DeepSeek is not in that table; tag it as AgentDojo's
+    # official "local" bucket so the attack can address "Local model".
+    llm.name = agentdojo_attack_pipeline_name(model_config.model)
     pipeline = AgentPipeline.from_config(
         PipelineConfig(
             llm=llm,
@@ -206,3 +209,17 @@ def build_dojo_pipeline(
         )
         pipeline.elements = elements
     return pipeline
+
+
+def agentdojo_attack_pipeline_name(model: str) -> str:
+    """Return a pipeline name AgentDojo's fixed attacks can resolve.
+
+    Official ``important_instructions`` scans ``pipeline.name`` for keys in
+    ``MODEL_NAMES`` (gpt-4o, claude-3, local, ...). Unknown gateway IDs such
+    as DeepSeek would otherwise raise before any case runs.
+    """
+    from agentdojo.models import MODEL_NAMES
+
+    if any(key in model for key in MODEL_NAMES):
+        return model
+    return f"{model} local"

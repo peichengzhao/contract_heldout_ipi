@@ -19,3 +19,7 @@ private_model_config.md
 model_api_ablation.py
 model_api_arms_race.py
 model_api_hetero.py
+# Downloaded Hugging Face snapshots (BFCL / T-Eval / API-Bank)
+data/hf/
+# Downloaded IPI attack sets (InjecAgent / BIPIA)
+data/ipi/

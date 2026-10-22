@@ -88,6 +88,8 @@ def evaluate_fixed_defense(
 
     attack = None
     if attack_name is not None:
+        import contract_heldout_ipi.dojo.chatinject_attack  # noqa: F401
+        import contract_heldout_ipi.dojo.pismith_attack  # noqa: F401
         from agentdojo.attacks.attack_registry import ATTACKS, load_attack
 
         if attack_name not in ATTACKS:

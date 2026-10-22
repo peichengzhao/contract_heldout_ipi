@@ -26,6 +26,10 @@ from contract_heldout_ipi.dojo import (  # noqa: E402
     build_manifest,
     evaluate_fixed_defense,
 )
+from contract_heldout_ipi.dojo.transfer import (  # noqa: E402
+    load_frozen_system_prompt,
+    load_transfer_split,
+)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -43,6 +47,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--attack", default="injecagent")
     parser.add_argument("--no-attack", action="store_true")
     parser.add_argument("--defense", choices=DOJO_DEFENSES, default="none")
+    parser.add_argument("--split-file", type=Path)
+    parser.add_argument(
+        "--split",
+        default="eval",
+        help="Split object in --split-file (eval, heldout, or train).",
+    )
     parser.add_argument("--user-task", action="append", default=[])
     parser.add_argument("--injection-task", action="append", default=[])
     parser.add_argument("--max-user-tasks", type=int, default=3)
@@ -61,6 +71,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--deepseek-max-tokens", type=int, default=8192)
     parser.add_argument("--tool-output-format", choices=("yaml", "json"), default="yaml")
     parser.add_argument("--system-message")
+    parser.add_argument("--system-message-file", type=Path)
+    parser.add_argument(
+        "--freeze-harness-from",
+        type=Path,
+        help="Load final_system_prompt from a coevolution report, or a .txt harness file.",
+    )
     return parser.parse_args(argv)
 
 
@@ -84,6 +100,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         config = ExperimentModelConfig.from_file(args.config)
         model_config = config.for_role("task_agent")
+        system_message = _resolve_system_message(args)
+        split_users, split_injections, split_suite, split_version = (
+            _resolve_split_selection(args)
+        )
+        suite_name = split_suite or args.suite
+        benchmark_version = split_version or args.benchmark_version
+        user_task_ids = args.user_task or split_users
+        injection_task_ids = args.injection_task or split_injections
+        explicit_selection = bool(user_task_ids or injection_task_ids)
         pipeline = build_dojo_pipeline(
             config,
             defense=args.defense,
@@ -95,19 +120,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if model_config.model.casefold().startswith("deepseek")
                 else args.max_tokens
             ),
-            system_message=args.system_message,
+            system_message=system_message,
             tool_output_format=args.tool_output_format,
         )
         report = evaluate_fixed_defense(
             pipeline,
-            benchmark_version=args.benchmark_version,
-            suite_name=args.suite,
+            benchmark_version=benchmark_version,
+            suite_name=suite_name,
             attack_name=None if args.no_attack else args.attack,
-            user_task_ids=args.user_task or None,
-            injection_task_ids=args.injection_task or None,
-            max_user_tasks=None if args.all_tasks else args.max_user_tasks,
+            user_task_ids=user_task_ids,
+            injection_task_ids=injection_task_ids,
+            max_user_tasks=(
+                None
+                if args.all_tasks or explicit_selection
+                else args.max_user_tasks
+            ),
             max_injection_tasks=(
-                None if args.all_tasks else args.max_injection_tasks
+                None
+                if args.all_tasks or explicit_selection
+                else args.max_injection_tasks
             ),
             run_clean=not args.skip_clean,
             continue_on_error=not args.fail_fast,
@@ -147,6 +178,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  {count}x {error}")
     print(f"Wrote {args.output}")
     return 0
+
+
+def _resolve_system_message(args: argparse.Namespace) -> str | None:
+    sources = [
+        name
+        for name, value in (
+            ("--system-message", args.system_message),
+            ("--system-message-file", args.system_message_file),
+            ("--freeze-harness-from", args.freeze_harness_from),
+        )
+        if value
+    ]
+    if len(sources) > 1:
+        raise ValueError("use only one of " + ", ".join(sources))
+    if args.system_message:
+        return args.system_message
+    if args.system_message_file is not None:
+        return load_frozen_system_prompt(args.system_message_file)
+    if args.freeze_harness_from is not None:
+        return load_frozen_system_prompt(args.freeze_harness_from)
+    return None
+
+
+def _resolve_split_selection(
+    args: argparse.Namespace,
+) -> tuple[list[str] | None, list[str] | None, str | None, str | None]:
+    if args.split_file is None:
+        return None, None, None, None
+    loaded = load_transfer_split(args.split_file, args.split)
+    return (
+        loaded["user_task_ids"],
+        loaded["injection_task_ids"],
+        loaded["suite"],
+        loaded["benchmark_version"],
+    )
 
 
 def _show_manifest(manifest) -> None:

@@ -110,7 +110,10 @@ def test_pipeline_uses_task_agent_model_and_deepseek_route_without_calling_api()
 
     pipeline = build_dojo_pipeline(config, max_tokens=8192)
 
-    assert pipeline.name == "deepseek-task"
+    assert pipeline.name == "deepseek-task local"
+    from agentdojo.attacks.base_attacks import get_model_name_from_pipeline
+
+    assert get_model_name_from_pipeline(pipeline) == "Local model"
     llm = list(pipeline.elements)[2]
     assert llm.model == "deepseek-task"
     assert llm.max_output_tokens == 8192
