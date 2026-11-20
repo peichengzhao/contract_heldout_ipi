@@ -447,11 +447,44 @@ def strip_fences(text: str) -> str:
 
 
 def assert_undefended_search(defense: str, system_message: str | None) -> None:
-    """Search is valid only when the victim has no defense prompt."""
+    """Transfer search is valid only when the victim has no defense prompt."""
     if defense != "none" or (system_message or "").strip():
         raise ValueError(
-            "IterInject search runs only against defense none, with no harness"
+            "IterInject transfer search runs only against defense none, with no harness"
         )
+
+
+def search_victim_setup(
+    defense: str, harness_text: str | None
+) -> tuple[str, str | None]:
+    """Return ``(search_defense, victim_system_message)``.
+
+    ``none`` keeps the victim undefended. ``frozen`` puts the harness on the
+    victim only. Callers must not pass ``victim_system_message`` to the optimizer.
+    """
+    if defense == "none":
+        assert_undefended_search(defense, None)
+        return "none", None
+    if defense == "frozen":
+        text = (harness_text or "").strip()
+        if not text:
+            raise ValueError("frozen adaptive search requires the harness text")
+        return "frozen", text
+    raise ValueError("search defense must be none or frozen")
+
+
+def assert_resume_search(
+    previous: dict[str, Any], *, search_defense: str, suite: str
+) -> None:
+    """Refuse to continue a search that used a different victim defense."""
+    if previous.get("phase") != "search" or previous.get("search_defense") != search_defense:
+        raise ValueError(
+            f"resume file is not an IterInject search against {search_defense}"
+        )
+    if previous.get("harness_visible_to_optimizer") is not False:
+        raise ValueError("resume file exposed a harness to the optimizer")
+    if previous.get("suite") != suite:
+        raise ValueError("resume file is for a different suite")
 
 
 def replay_payloads_from_search(report: dict[str, Any]) -> list[dict[str, str]]:

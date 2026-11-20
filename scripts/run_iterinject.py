@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""IterInject closed loop on AgentDojo, then optional frozen replay.
+"""IterInject closed loop on AgentDojo.
 
-Search always uses defense none and never passes a harness to the optimizer.
-Replay scores the saved payloads once and does not rewrite them.
+``--defense none`` searches an undefended victim. ``--defense frozen`` searches
+with the frozen harness on the victim only; the optimizer still sees traces,
+not the harness text. Replay scores saved undefended payloads once.
 """
 
 from __future__ import annotations
@@ -44,10 +45,11 @@ from contract_heldout_ipi.eval.iterinject import (  # noqa: E402
     CampaignLog,
     LoopBudget,
     Seed,
-    assert_undefended_search,
+    assert_resume_search,
     fresh_seed_bank,
     replay_payloads_from_search,
     run_target,
+    search_victim_setup,
 )
 
 
@@ -97,9 +99,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _search(args: argparse.Namespace) -> int:
-    assert_undefended_search("none", None)
-    if args.defense != "none":
-        raise ValueError("search only supports --defense none; replay the saved payloads")
     if args.config is None or args.output is None:
         raise ValueError("search requires --config and --output")
     if args.optimizer_role != "attack":
@@ -120,9 +119,17 @@ def _search(args: argparse.Namespace) -> int:
     done: set[str] = set()
     bank = fresh_seed_bank()
     finished: list[dict[str, Any]] = []
+    harness_text = None
+    if args.defense == "frozen":
+        harness_text = load_frozen_system_prompt(args.harness)
+    search_defense, victim_system_message = search_victim_setup(
+        args.defense, harness_text
+    )
     if args.resume and args.output.is_file():
         previous = json.loads(args.output.read_text(encoding="utf-8"))
-        _check_resume(previous, split)
+        assert_resume_search(
+            previous, search_defense=search_defense, suite=split["suite"]
+        )
         bank = [Seed.from_dict(item) for item in previous.get("seed_bank", [])]
         if not bank:
             bank = fresh_seed_bank()
@@ -139,7 +146,7 @@ def _search(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         max_retries=args.max_retries,
         max_tokens=args.max_tokens,
-        system_message=None,
+        system_message=victim_system_message,
     )
     optimizer = build_role_client(
         config,
@@ -156,14 +163,21 @@ def _search(args: argparse.Namespace) -> int:
             if pair.get("success") and isinstance(pair.get("best_payload"), str)
         ]
     )
-    report = _search_report(args, config.attack_model, config.task_agent_model or config.attack_model, split, budget)
+    report = _search_report(
+        args,
+        config.attack_model,
+        config.task_agent_model or config.attack_model,
+        split,
+        budget,
+        search_defense=search_defense,
+    )
     report["pairs"] = finished
     report["seed_bank"] = [seed.to_dict() for seed in bank]
 
     pending = [pair for pair in pairs if _pair_key(*pair) not in done]
     print(
-        f"search: {len(pending)} pairs on {split['suite']} defense=none "
-        f"optimizer={config.attack_model}",
+        f"search: {len(pending)} pairs on {split['suite']} defense={search_defense} "
+        f"harness_visible_to_optimizer=false optimizer={config.attack_model}",
         flush=True,
     )
     for index, (user_id, injection_id) in enumerate(pending, start=1):
@@ -391,13 +405,18 @@ def _search_report(
     task_model: str,
     split: dict[str, Any],
     budget: LoopBudget,
+    *,
+    search_defense: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "method": "iterinject",
         "phase": "search",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "search_defense": "none",
+        "search_defense": search_defense,
+        "harness_path": (
+            str(args.harness) if search_defense == "frozen" else None
+        ),
         "harness_visible_to_optimizer": False,
         "suite": split["suite"],
         "benchmark_version": split["benchmark_version"],
@@ -416,15 +435,6 @@ def _search_report(
         "seed_bank": [],
         "summary": {},
     }
-
-
-def _check_resume(previous: dict[str, Any], split: dict[str, Any]) -> None:
-    if previous.get("phase") != "search" or previous.get("search_defense") != "none":
-        raise ValueError("resume file is not an undefended IterInject search")
-    if previous.get("harness_visible_to_optimizer") is not False:
-        raise ValueError("resume file exposed a harness to the optimizer")
-    if previous.get("suite") != split["suite"]:
-        raise ValueError("resume file is for a different suite")
 
 
 def _write(
